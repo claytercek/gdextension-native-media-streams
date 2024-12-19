@@ -1,0 +1,19 @@
+[configuration]
+
+entry_symbol = "gdextension_init"
+compatibility_minimum = 4.3
+
+[libraries]
+
+linux.debug.x86_64 = "bin/native-media-streams.linux.debug.x86_64.so"
+linux.release.x86_64 = "bin/native-media-streams.linux.release.x86_64.so"
+linux.debug.arm64 = "bin/native-media-streams.linux.debug.arm64.so"
+linux.release.arm64 = "bin/native-media-streams.linux.release.arm64.so"
+linux.debug.rv64 = "bin/native-media-streams.linux.debug.rv64.so"
+linux.release.rv64 = "bin/native-media-streams.linux.release.rv64.so"
+windows.debug.x86_64 = "bin/native-media-streams.windows.debug.x86_64.dll"
+windows.release.x86_64 = "bin/native-media-streams.windows.release.x86_64.dll"
+macos.debug = "bin/native-media-streams.macos.debug.framework"
+macos.release = "bin/native-media-streams.macos.release.framework"
+android.debug.arm64 = "bin/native-media-streams.android.debug.arm64.so"
+android.release.arm64 = "bin/native-media-streams.android.release.arm64.so"
