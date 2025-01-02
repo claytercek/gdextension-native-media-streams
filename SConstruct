@@ -6,6 +6,10 @@ from pathlib import Path
 # TODO: Do not copy environment after godot-cpp/test is updated <https://github.com/godotengine/godot-cpp/blob/master/test/SConstruct>.
 env = SConscript("godot-cpp/SConstruct")
 
+env.Tool('compilation_db')
+cdb = env.CompilationDatabase()
+Alias('cdb', cdb)
+
 # Add source files.
 env.Append(CPPPATH=["src/"])
 sources = Glob("src/*.cpp")

@@ -7,32 +7,24 @@ GDExtension template that automatically builds into a self-contained addon for t
     - `git clone --recurse-submodules https://github.com/nathanfranke/gdextension.git`
     - `cd gdextension`
     - Alternatively, `git submodule update --init --recursive`
-2. Update to the latest `godot-cpp`.
-    - `git submodule update --remote`
 2. Build a debug binary for the current platform.
     - `scons`
 3. Import, edit, and play `project/` using Godot Engine 4+.
     - `godot --path project/`
-4. Check the Label on screen:
-   ```
-   Hello GDScript!
-   Hello GDExtension Node!
-   Hello GDExtension Singleton!
-   ```
 
 ### Repository structure:
 - `project/` - Godot project boilerplate.
-  - `addons/example/` - Files to be distributed to other projects.¹
-  - `demo/` - Scenes and scripts for internal testing. Not strictly necessary.
-- `src/` - Source code of this extension.
+  - `addons/native-media-stream/` - Built binaries, to be distributed to other projects.
+  - `demo/` - Scenes and scripts for internal testing.
+- `src/` - Source code.
 - `godot-cpp/` - Submodule needed for GDExtension compilation.
 
 ¹ Before distributing as an addon, all binaries for all platforms must be built and copied to the `bin/` directory. This is done automatically by GitHub Actions.
 
-### Make it your own:
-1. Rename `project/addons/example/` and `project/addons/example/example.gdextension`.
-2. Replace `LICENSE`, `README.md`, and your code in `src/`.
-3. Not required, but consider leaving a note about this template if you found it helpful!
+### LSP/Editor IDE Support:
+Running `scons cdb` will generate a `compile_commands.json` file in the root directory. This can be used by language servers and IDEs to provide code completion and other features.
+
+Many editors (like VSCode, Zed, etc.) can use this file to provide better C++ support while editing the extension code.
 
 ### Distributing your extension on the Godot Asset Library with GitHub Actions:
 1. If needed, go to Repository→Actions→Builds→Run workflow

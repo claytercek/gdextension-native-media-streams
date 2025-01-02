@@ -12,3 +12,6 @@
 
 # Editors
 .vscode/
+
+compile_commands.json
+.cache
