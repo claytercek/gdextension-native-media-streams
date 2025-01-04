@@ -29,7 +29,7 @@ sources = Glob("src/*.cpp")
 # Platform-specific configurations
 if env["platform"] == "macos":
     # Add AVFoundation source files (note the .mm extension)
-    sources.extend(Glob("src/avf/*.mm"))
+    sources.extend(Glob("src/avf/*.mm") + Glob("src/avf/*.cpp"))
 
     # Add necessary frameworks
     env.Append(FRAMEWORKS=["AVFoundation", "CoreMedia", "CoreVideo"])

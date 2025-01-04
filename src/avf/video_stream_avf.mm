@@ -1,29 +1,37 @@
 #include "video_stream_avf.hpp"
 #include <godot_cpp/classes/file_access.hpp>
-#include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>
 
 using namespace godot;
 
-void VideoStreamAVF::_bind_methods() {}
-
-void VideoStreamPlaybackAVF::_bind_methods() {}
-
-VideoStreamPlaybackAVF::VideoStreamPlaybackAVF()
-    : format(Image::FORMAT_RGBA8), frames_pending(0), player(nullptr),
-      player_item(nullptr), video_output(nullptr), playing(false),
-      buffering(false), paused(false), last_update_time(0), time(0),
-      delay_compensation(0) {
-  texture.instantiate();
+// -----------------------------------------------------------------------------
+// VideoStreamAVF Implementation
+// -----------------------------------------------------------------------------
+void VideoStreamAVF::_bind_methods() {
+  // No additional bindings needed for the stream class
 }
 
-VideoStreamPlaybackAVF::~VideoStreamPlaybackAVF() { clear(); }
+// -----------------------------------------------------------------------------
+// VideoStreamPlaybackAVF Implementation
+// -----------------------------------------------------------------------------
+void VideoStreamPlaybackAVF::_bind_methods() {
+  // No additional bindings needed as we're implementing VideoStreamPlayback
+  // interface
+}
 
-void VideoStreamPlaybackAVF::clear() {
+VideoStreamPlaybackAVF::VideoStreamPlaybackAVF() { texture.instantiate(); }
+
+VideoStreamPlaybackAVF::~VideoStreamPlaybackAVF() { clear_avf_objects(); }
+
+// -----------------------------------------------------------------------------
+// Resource Management
+// -----------------------------------------------------------------------------
+void VideoStreamPlaybackAVF::clear_avf_objects() {
   if (player) {
     [(AVPlayer *)player pause];
     [(AVPlayer *)player release];
@@ -35,344 +43,445 @@ void VideoStreamPlaybackAVF::clear() {
     video_output = nullptr;
   }
 
-  // player_item is owned by player, no need to release
-  player_item = nullptr;
-
+  player_item = nullptr; // owned by player
   frames_pending = 0;
   playing = false;
-  file.unref();
 }
 
-void VideoStreamPlaybackAVF::set_file(const String& p_file) {
-    // Store filename for potential resets
-    file_name = p_file;
+bool VideoStreamPlaybackAVF::setup_video_pipeline(const String &p_file) {
+  NSString *path = [NSString stringWithUTF8String:p_file.utf8().get_data()];
+  NSURL *url = [NSURL fileURLWithPath:path];
 
-    UtilityFunctions::print("Loading video file: ", p_file);
+  // Create asset
+  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
+  if (!asset) {
+    UtilityFunctions::printerr("Failed to create asset for: ", p_file);
+    return false;
+  }
 
-    // Verify file exists and is readable
-    Ref<FileAccess> file = FileAccess::open(p_file, FileAccess::READ);
-    ERR_FAIL_COND_MSG(file.is_null(), "Cannot open file '" + p_file + "'.");
+  // Load video track
+  dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+  __block bool success = false;
+  __block CGSize track_size = CGSizeZero;
 
-    // Clean up any existing playback resources
-    clear();
+  [asset loadTracksWithMediaType:AVMediaTypeVideo
+               completionHandler:^(NSArray<AVAssetTrack *> *tracks,
+                                   NSError *error) {
+                 if (error || tracks.count == 0) {
+                 UtilityFunctions::printerr(
+                       "Error loading video tracks for: ", p_file);
+                   if (error) {
+                     UtilityFunctions::printerr(
+                         "Error: ", error.localizedDescription.UTF8String);
+                   } else {
+                     UtilityFunctions::printerr("No video tracks found");
+                   }
 
-    // Convert Godot String to NSString for AVFoundation
-    NSString* path = [NSString stringWithUTF8String:file->get_path_absolute().utf8().get_data()];
-    NSURL* url = [NSURL fileURLWithPath:path];
+                   dispatch_semaphore_signal(semaphore);
+                   return;
+                 }
 
-    // Create asset with improved loading options
-    NSDictionary* options = @{
-        AVURLAssetPreferPreciseDurationAndTimingKey: @YES,
-        AVURLAssetPreferPreciseDurationAndTimingKey: @YES
-    };
-    AVURLAsset* asset = [AVURLAsset URLAssetWithURL:url options:options];
-    ERR_FAIL_COND_MSG(!asset, "Failed to create AVAsset for '" + p_file + "'.");
+                 AVAssetTrack *video_track = tracks.firstObject;
+                 track_size = video_track.naturalSize;
+                 success = true;
+                 dispatch_semaphore_signal(semaphore);
+               }];
 
-    // Use dispatch group to handle multiple async operations
-    dispatch_group_t load_group = dispatch_group_create();
-    __block bool video_load_success = false;
-    __block bool audio_load_success = false;
+  // Wait for track loading
+  dispatch_time_t timeout =
+      dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC));
+  if (dispatch_semaphore_wait(semaphore, timeout) != 0) {
+    dispatch_release(semaphore);
+    UtilityFunctions::printerr("Timeout while loading video tracks");
+    return false;
+  }
+  dispatch_release(semaphore);
 
-    // Load video tracks asynchronously
-    dispatch_group_enter(load_group);
-    [asset loadTracksWithMediaType:AVMediaTypeVideo completionHandler:^(NSArray<AVAssetTrack *>* tracks, NSError* error) {
-        if (error || tracks.count == 0) {
-            UtilityFunctions::printerr("Failed to load video tracks: ", error ? [[error localizedDescription] UTF8String] : "No tracks found");
-            dispatch_group_leave(load_group);
-            return;
-        }
+  if (!success) {
+    UtilityFunctions::printerr("Failed to load video tracks for file: ", p_file);
+    return false;
+  }
 
-        // Get video dimensions and prepare format conversion
-        AVAssetTrack* video_track = tracks.firstObject;
-        CGSize track_size = video_track.naturalSize;
+  // Update size with alignment
+  frame_size.x = static_cast<int32_t>(track_size.width + 3) & ~3;
+  frame_size.y = static_cast<int32_t>(track_size.height);
 
-        // Update size with alignment for better performance
-        size.x = static_cast<int32_t>(track_size.width + 3) & ~3;  // Align to 4 pixels
-        size.y = static_cast<int32_t>(track_size.height);
+  // Configure video output
+  NSDictionary *attributes = @{
+    (id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
+    (id)kCVPixelBufferMetalCompatibilityKey : @YES,
+    (id)kCVPixelBufferWidthKey : @(frame_size.x),
+    (id)kCVPixelBufferHeightKey : @(frame_size.y),
+    (id)kCVPixelBufferCGBitmapContextCompatibilityKey : @YES
+  };
 
-        // Determine best pixel format based on hardware capabilities
-        NSArray* pixelFormats = @[
-            @(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange), // Most hardware efficient
-            @(kCVPixelFormatType_32BGRA),                        // Good CPU fallback
-            @(kCVPixelFormatType_420YpCbCr8Planar)              // Another alternative
-        ];
+  AVPlayerItemVideoOutput *output = [[AVPlayerItemVideoOutput alloc]
+      initWithPixelBufferAttributes:attributes];
 
-        // Set up video output configuration with the correct dimensions
-        NSDictionary* pixelBufferAttributes = @{
-            (id)kCVPixelBufferPixelFormatTypeKey: pixelFormats,
-            (id)kCVPixelBufferMetalCompatibilityKey: @YES,
-            (id)kCVPixelBufferIOSurfacePropertiesKey: @{},
-            (id)kCVPixelBufferWidthKey: @(size.x),
-            (id)kCVPixelBufferHeightKey: @(size.y)
-        };
+  if (!output) {
+    UtilityFunctions::printerr("Failed to create video output");
+    return false;
+  }
 
-        // Create video output with the correct dimensions
-        AVPlayerItemVideoOutput* output = [[AVPlayerItemVideoOutput alloc]
-            initWithPixelBufferAttributes:pixelBufferAttributes];
+  // Create player item and player
+  AVPlayerItem *item = [AVPlayerItem playerItemWithAsset:asset];
+  if (!item) {
+    [output release];
+    UtilityFunctions::printerr("Failed to create player item");
+    return false;
+  }
 
-        if (!output) {
-            UtilityFunctions::printerr("Failed to create video output");
-            dispatch_group_leave(load_group);
-            return;
-        }
+  [item addOutput:output];
 
-        // Store video output
-        video_output = output;
+  AVPlayer *avf_player = [[AVPlayer alloc] initWithPlayerItem:item];
+  if (!avf_player) {
+    [output release];
+    UtilityFunctions::printerr("Failed to create player");
+    return false;
+  }
 
-        // Allocate frame buffer
-        size_t buffer_size = size.x * size.y * 4;
-        frame_data.resize(buffer_size);
+  // Store objects
+  video_output = output;
+  player_item = item;
+  player = avf_player;
 
-        // Create initial texture
-        Ref<Image> img = Image::create_empty(size.x, size.y, false, Image::FORMAT_RGBA8);
-        ERR_FAIL_COND_MSG(img.is_null(), "Failed to create initial texture.");
-        texture->set_image(img);
+  // Create initial texture
+  ensure_frame_buffer(frame_size.x, frame_size.y);
+  Ref<Image> img = Image::create_empty(frame_size.x, frame_size.y, false,
+                                       Image::FORMAT_RGBA8);
+  if (img.is_null()) {
+    clear_avf_objects();
+    UtilityFunctions::printerr("Failed to create initial texture");
+    return false;
+  }
 
-        video_load_success = true;
-        dispatch_group_leave(load_group);
-    }];
-
-    // Load audio tracks asynchronously
-    dispatch_group_enter(load_group);
-    [asset loadTracksWithMediaType:AVMediaTypeAudio completionHandler:^(NSArray<AVAssetTrack *>* tracks, NSError* error) {
-        if (!error && tracks.count > 0) {
-            // Store audio track information
-            audio_tracks.clear();
-
-            for (AVAssetTrack* audio_track in tracks) {
-                AudioTrackInfo track_info;
-                track_info.channels = audio_track.formatDescriptions.firstObject ?
-                    CMAudioFormatDescriptionGetStreamBasicDescription((__bridge CMAudioFormatDescriptionRef)audio_track.formatDescriptions.firstObject)->mChannelsPerFrame : 2;
-                track_info.sample_rate = audio_track.naturalTimeScale;
-                track_info.language = [audio_track.languageCode UTF8String];
-                audio_tracks.push_back(track_info);
-            }
-
-            audio_load_success = true;
-        }
-        dispatch_group_leave(load_group);
-    }];
-
-    // Wait for all loading operations with timeout
-    dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC);
-    long result = dispatch_group_wait(load_group, timeout);
-    dispatch_release(load_group);
-
-    // Check if loading was successful
-    ERR_FAIL_COND_MSG(!video_load_success, "Failed to load video tracks.");
-
-    // Create player item with improved buffering
-    player_item = [AVPlayerItem playerItemWithAsset:asset];
-    ERR_FAIL_COND_MSG(!player_item, "Failed to create player item.");
-
-    // Configure buffering behavior
-    player_item.preferredForwardBufferDuration = 2.0; // Buffer 2 seconds ahead
-    [player_item setPreferredMaximumResolution:CGSizeMake(size.x, size.y)];
-
-    // Add video output to player item
-    [player_item addOutput:video_output];
-
-    // Create player with initial settings
-    player = [[AVPlayer alloc] initWithPlayerItem:player_item];
-    ERR_FAIL_COND_MSG(!player, "Failed to create player.");
+  texture->set_image(img);
+  return true;
 }
 
+// -----------------------------------------------------------------------------
+// Video Processing
+// -----------------------------------------------------------------------------
 void VideoStreamPlaybackAVF::video_write() {
-    if (!video_output || !player_item) {
-        return;
+  if (!video_output || !player_item || !texture.is_valid()) {
+    return;
+  }
+
+  AVPlayerItemVideoOutput *output = (AVPlayerItemVideoOutput *)video_output;
+  CMTime player_time = [(AVPlayer *)player currentTime];
+
+  // Early exit if no new frame is available
+  if (![output hasNewPixelBufferForItemTime:player_time]) {
+    return;
+  }
+
+  // Get the pixel buffer
+  CVPixelBufferRef pixel_buffer = [output copyPixelBufferForItemTime:player_time
+                                                  itemTimeForDisplay:nil];
+  if (!pixel_buffer) {
+    return;
+  }
+
+  // RAII-style buffer management
+  struct ScopedPixelBuffer {
+    CVPixelBufferRef buffer;
+    ScopedPixelBuffer(CVPixelBufferRef b) : buffer(b) {
+      CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
     }
-
-    // Get current player time and check if output is ready
-    AVPlayerItemVideoOutput* output = (AVPlayerItemVideoOutput*)video_output;
-    CMTime player_time = [(AVPlayer*)player currentTime];
-
-    // Early exit if no new frame is available
-    if (![output hasNewPixelBufferForItemTime:player_time]) {
-        return;
+    ~ScopedPixelBuffer() {
+      CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+      CVBufferRelease(buffer);
     }
+  } scoped_buffer(pixel_buffer);
 
-    // Get the pixel buffer for the current time
-    CVPixelBufferRef pixel_buffer = [output copyPixelBufferForItemTime:player_time
-                                                   itemTimeForDisplay:nil];
-    if (!pixel_buffer) {
-        return;
+  // Get buffer info
+  const uint8_t *src_data =
+      (const uint8_t *)CVPixelBufferGetBaseAddress(pixel_buffer);
+  size_t src_stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
+  size_t width = CVPixelBufferGetWidth(pixel_buffer);
+  size_t height = CVPixelBufferGetHeight(pixel_buffer);
+
+  // Update frame data if needed
+  ensure_frame_buffer(width, height);
+
+  // Fast path: if strides match, we can do a single conversion
+  uint8_t *dst_data = frame_data.ptrw();
+  size_t dst_stride = width * 4;
+
+  if (src_stride == dst_stride) {
+    convert_bgra_to_rgba(src_data, dst_data, width * height);
+  } else {
+    for (size_t y = 0; y < height; y++) {
+      convert_bgra_to_rgba(src_data + y * src_stride, dst_data + y * dst_stride,
+                           width);
     }
+  }
 
+  update_texture(width, height);
+}
 
-    size_t buffer_width = CVPixelBufferGetWidth(pixel_buffer);
-    size_t buffer_height = CVPixelBufferGetHeight(pixel_buffer);
+// -----------------------------------------------------------------------------
+// Public Interface
+// -----------------------------------------------------------------------------
+void VideoStreamPlaybackAVF::set_file(const String &p_file) {
+  file_name = p_file;
 
-    // Use RAII for pixel buffer locking
-    struct PixelBufferLock {
-        CVPixelBufferRef buffer;
-        PixelBufferLock(CVPixelBufferRef b) : buffer(b) {
-            CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
-        }
-        ~PixelBufferLock() {
-            CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
-            CVBufferRelease(buffer);
-        }
-    } buffer_lock(pixel_buffer);
+  Ref<FileAccess> file = FileAccess::open(p_file, FileAccess::READ);
+  ERR_FAIL_COND_MSG(file.is_null(), "Cannot open file '" + p_file + "'.");
 
-    // Get buffer properties
-    void* base_address = CVPixelBufferGetBaseAddress(pixel_buffer);
-    size_t bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
+  clear_avf_objects();
 
-    // Ensure our frame data buffer is the correct size
-    size_t required_size = buffer_width * buffer_height * 4;
-    if (frame_data.size() != required_size) {
-        frame_data.resize(required_size);
-    }
+  if (!setup_video_pipeline(file->get_path_absolute())) {
+    clear_avf_objects();
+    ERR_FAIL_MSG("Failed to setup video pipeline for '" + p_file + "'.");
+  }
+}
 
-    // Get write access to our frame data
-    uint8_t* dst = frame_data.ptrw();
-    const uint8_t* src = (const uint8_t*)base_address;
+void VideoStreamPlaybackAVF::_play() {
+  if (!player) {
+    return;
+  }
 
-    // Optimized copy with BGRA to RGBA conversion
-    // Using row-by-row copy to handle potential padding in source buffer
-    for (size_t y = 0; y < buffer_height; y++) {
-        const uint8_t* row_src = src + (y * bytes_per_row);
-        uint8_t* row_dst = dst + (y * buffer_width * 4);
+  if (!playing) {
+    time = 0;
+    [(AVPlayer *)player seekToTime:kCMTimeZero];
+  }
 
-        for (size_t x = 0; x < buffer_width; x++) {
-            size_t src_idx = x * 4;
-            size_t dst_idx = x * 4;
+  [(AVPlayer *)player play];
+  playing = true;
+  paused = false;
+}
 
-            // BGRA to RGBA conversion
-            row_dst[dst_idx + 0] = row_src[src_idx + 2]; // R
-            row_dst[dst_idx + 1] = row_src[src_idx + 1]; // G
-            row_dst[dst_idx + 2] = row_src[src_idx + 0]; // B
-            row_dst[dst_idx + 3] = row_src[src_idx + 3]; // A
-        }
-    }
+void VideoStreamPlaybackAVF::_stop() {
+  if (!player) {
+    return;
+  }
 
-    // Create PackedByteArray for the Image
-    PackedByteArray pba;
-    pba.resize(frame_data.size());
-    memcpy(pba.ptrw(), frame_data.ptr(), frame_data.size());
+  [(AVPlayer *)player pause];
+  [(AVPlayer *)player seekToTime:kCMTimeZero];
+  playing = false;
+  paused = false;
+  time = 0;
+}
 
-    // Update texture with new frame
-    Ref<Image> img = Image::create_from_data(
-        buffer_width,
-        buffer_height,
-        false, // no mipmaps
-        Image::FORMAT_RGBA8,
-        pba
-    );
+void VideoStreamPlaybackAVF::_set_paused(bool p_paused) {
+  if (!player || paused == p_paused) {
+    return;
+  }
 
-    if (img.is_valid()) {
-        texture->update(img);
-        frames_pending = 1;
-    }
+  if (p_paused) {
+    [(AVPlayer *)player pause];
+  } else {
+    [(AVPlayer *)player play];
+  }
+  paused = p_paused;
+}
+
+void VideoStreamPlaybackAVF::_seek(double p_time) {
+  if (!player) {
+    return;
+  }
+
+  double length = _get_length();
+  double seek_time = CLAMP(p_time, 0.0, length);
+
+  CMTime time_value = CMTimeMakeWithSeconds(seek_time, NSEC_PER_SEC);
+  [(AVPlayer *)player seekToTime:time_value
+                 toleranceBefore:kCMTimeZero
+                  toleranceAfter:kCMTimeZero];
 }
 
 void VideoStreamPlaybackAVF::_update(double p_delta) {
-  if (!playing || paused) {
+  if (!playing || paused || !player) {
     return;
   }
 
   time += p_delta;
 
-  if (player) {
-    CMTime current_time = [(AVPlayer *)player currentTime];
-    double current_seconds = CMTimeGetSeconds(current_time);
+  CMTime current_time = [(AVPlayer *)player currentTime];
+  if (CMTIME_IS_INVALID(current_time)) {
+    return;
+  }
 
-    // Only write video if we're not too far ahead
-    if (current_seconds <= time) {
-      video_write();
-    }
+  double current_seconds = CMTimeGetSeconds(current_time);
+  if (current_seconds <= time) {
+    video_write();
   }
 }
 
-void VideoStreamPlaybackAVF::_play() {
-  if (!playing) {
-    time = 0;
-  } else {
-    _stop();
-  }
-
-  playing = true;
-
-  if (player) {
-    [(AVPlayer *)player play];
+// -----------------------------------------------------------------------------
+// Helper Functions
+// -----------------------------------------------------------------------------
+void VideoStreamPlaybackAVF::ensure_frame_buffer(size_t width, size_t height) {
+  size_t required_size = width * height * 4;
+  if (frame_data.size() != required_size) {
+    frame_data.resize(required_size);
   }
 }
 
-void VideoStreamPlaybackAVF::_stop() {
-  if (playing) {
-    if (player) {
-      [(AVPlayer *)player pause];
-      [(AVPlayer *)player seekToTime:kCMTimeZero];
-    }
-    clear();
-    set_file(file_name); // reset
+void VideoStreamPlaybackAVF::convert_bgra_to_rgba(const uint8_t *src,
+                                                  uint8_t *dst,
+                                                  size_t pixel_count) {
+  for (size_t i = 0; i < pixel_count; i++) {
+    dst[0] = src[2]; // R
+    dst[1] = src[1]; // G
+    dst[2] = src[0]; // B
+    dst[3] = src[3]; // A
+    src += 4;
+    dst += 4;
   }
-  playing = false;
-  time = 0;
 }
 
+void VideoStreamPlaybackAVF::update_texture(size_t width, size_t height) {
+  PackedByteArray pba;
+  pba.resize(frame_data.size());
+  memcpy(pba.ptrw(), frame_data.ptr(), frame_data.size());
+
+  Ref<Image> img =
+      Image::create_from_data(width, height, false, Image::FORMAT_RGBA8, pba);
+
+  if (img.is_valid()) {
+    texture->update(img);
+    frames_pending = 1;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Getters
+// -----------------------------------------------------------------------------
 bool VideoStreamPlaybackAVF::_is_playing() const { return playing; }
-
-void VideoStreamPlaybackAVF::_set_paused(bool p_paused) {
-  if (playing && player) {
-    if (p_paused) {
-      [(AVPlayer *)player pause];
-    } else {
-      [(AVPlayer *)player play];
-    }
-  }
-  paused = p_paused;
-}
 
 bool VideoStreamPlaybackAVF::_is_paused() const { return paused; }
 
 double VideoStreamPlaybackAVF::_get_length() const {
-  if (player_item) {
-    CMTime duration = [(AVPlayerItem *)player_item duration];
-    return CMTimeGetSeconds(duration);
+  if (!player_item) {
+    return 0.0;
   }
-  return 0.0;
+
+  CMTime duration = [(AVPlayerItem *)player_item duration];
+  if (CMTIME_IS_INVALID(duration)) {
+    return 0.0;
+  }
+  return CMTimeGetSeconds(duration);
 }
 
 double VideoStreamPlaybackAVF::_get_playback_position() const {
-  if (player) {
-    CMTime current_time = [(AVPlayer *)player currentTime];
-    return CMTimeGetSeconds(current_time);
+  if (!player) {
+    return 0.0;
   }
-  return 0.0;
-}
 
-void VideoStreamPlaybackAVF::_seek(double p_time) {
-  if (player) {
-    CMTime seek_time = CMTimeMakeWithSeconds(p_time, NSEC_PER_SEC);
-    [(AVPlayer *)player seekToTime:seek_time];
+  CMTime current = [(AVPlayer *)player currentTime];
+  if (CMTIME_IS_INVALID(current)) {
+    return 0.0;
   }
+  return CMTimeGetSeconds(current);
 }
 
 Ref<Texture2D> VideoStreamPlaybackAVF::_get_texture() const { return texture; }
 
+// -----------------------------------------------------------------------------
+// Audio Handling
+// -----------------------------------------------------------------------------
 void VideoStreamPlaybackAVF::_set_audio_track(int p_idx) {
-  // TODO: Implement audio track selection
+  // TODO: Implement if needed
 }
 
 int VideoStreamPlaybackAVF::_get_channels() const {
-  // TODO: Get actual audio channel count
-  return 2;
+  if (!player_item) {
+    return 2;
+  }
+
+  __block int channels = 2;
+  dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+
+  AVAsset *asset = player_item.asset;
+  [asset
+      loadTracksWithMediaType:AVMediaTypeAudio
+            completionHandler:^(NSArray<AVAssetTrack *> *tracks,
+                                NSError *error) {
+              if (!error && tracks.count > 0) {
+                AVAssetTrack *audio_track = tracks.firstObject;
+                CMFormatDescriptionRef format =
+                    (__bridge CMFormatDescriptionRef)
+                        audio_track.formatDescriptions.firstObject;
+
+                if (format) {
+                  const AudioStreamBasicDescription *asbd =
+                      CMAudioFormatDescriptionGetStreamBasicDescription(format);
+                  if (asbd) {
+                    channels = asbd->mChannelsPerFrame;
+                  }
+                }
+              }
+              dispatch_semaphore_signal(semaphore);
+            }];
+
+  // Wait with timeout
+  dispatch_time_t timeout =
+      dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC));
+  if (dispatch_semaphore_wait(semaphore, timeout) != 0) {
+    UtilityFunctions::print_verbose(
+        "Timeout while getting audio channel count");
+  }
+  dispatch_release(semaphore);
+
+  return channels;
 }
 
 int VideoStreamPlaybackAVF::_get_mix_rate() const {
-  // TODO: Get actual audio sample rate
-  return 44100;
+  if (!player_item) {
+    return 44100;
+  }
+
+  __block int sample_rate = 44100;
+  dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+
+  AVAsset *asset = player_item.asset;
+  [asset
+      loadTracksWithMediaType:AVMediaTypeAudio
+            completionHandler:^(NSArray<AVAssetTrack *> *tracks,
+                                NSError *error) {
+              if (!error && tracks.count > 0) {
+                AVAssetTrack *audio_track = tracks.firstObject;
+                CMFormatDescriptionRef format =
+                    (__bridge CMFormatDescriptionRef)
+                        audio_track.formatDescriptions.firstObject;
+
+                if (format) {
+                  const AudioStreamBasicDescription *asbd =
+                      CMAudioFormatDescriptionGetStreamBasicDescription(format);
+                  if (asbd) {
+                    sample_rate = asbd->mSampleRate;
+                  }
+                }
+              }
+              dispatch_semaphore_signal(semaphore);
+            }];
+
+  // Wait with timeout
+  dispatch_time_t timeout =
+      dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC));
+  if (dispatch_semaphore_wait(semaphore, timeout) != 0) {
+    UtilityFunctions::print_verbose("Timeout while getting audio sample rate");
+  }
+  dispatch_release(semaphore);
+
+  return sample_rate;
 }
 
+// -----------------------------------------------------------------------------
 // ResourceFormatLoaderAVF Implementation
-Variant ResourceFormatLoaderAVF::_load(const String &p_path, const String &p_original_path, bool p_use_sub_threads, int32_t p_cache_mode) const {
+// -----------------------------------------------------------------------------
+Variant ResourceFormatLoaderAVF::_load(const String &p_path,
+                                       const String &p_original_path,
+                                       bool p_use_sub_threads,
+                                       int32_t p_cache_mode) const {
   VideoStreamAVF *stream = memnew(VideoStreamAVF);
   stream->set_file(p_path);
 
   Ref<VideoStreamAVF> avf_stream = Ref<VideoStreamAVF>(stream);
 
-  return { avf_stream };
+  return {avf_stream};
 }
 
 PackedStringArray ResourceFormatLoaderAVF::_get_recognized_extensions() const {
