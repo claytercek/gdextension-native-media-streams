@@ -2,17 +2,40 @@
 import os
 from glob import glob
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+  # Add type hints for SCons globals
+  from SCons.Script.SConscript import SConsEnvironment
+  from SCons.Defaults import DefaultEnvironment
+  Default = SConsEnvironment(DefaultEnvironment()).Default
+  Glob = DefaultEnvironment().Glob
+  Alias = DefaultEnvironment().Alias
+  CacheDir = DefaultEnvironment().CacheDir
+  SConscript = SConsEnvironment(DefaultEnvironment()).SConscript
 
 # TODO: Do not copy environment after godot-cpp/test is updated <https://github.com/godotengine/godot-cpp/blob/master/test/SConstruct>.
 env = SConscript("godot-cpp/SConstruct")
 
+# Add the compilation database tool for generating compile_commands.json.
 env.Tool('compilation_db')
 cdb = env.CompilationDatabase()
 Alias('cdb', cdb)
 
-# Add source files.
+# Add source files
 env.Append(CPPPATH=["src/"])
 sources = Glob("src/*.cpp")
+
+# Platform-specific configurations
+if env["platform"] == "macos":
+    # Add AVFoundation source files (note the .mm extension)
+    sources.extend(Glob("src/avf/*.mm"))
+
+    # Add necessary frameworks
+    env.Append(FRAMEWORKS=["AVFoundation", "CoreMedia", "CoreVideo"])
+
+    # Enable Objective-C++ compilation
+    env.Append(CXXFLAGS=["-ObjC++"])
 
 # Find gdextension path even if the directory or extension is renamed (e.g. project/addons/example/example.gdextension).
 (extension_path,) = glob("project/addons/*/*.gdextension")

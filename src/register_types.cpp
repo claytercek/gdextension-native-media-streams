@@ -1,32 +1,58 @@
 #include "register_types.h"
 
-#include <gdextension_interface.h>
-#include <godot_cpp/classes/engine.hpp>
+using namespace godot;
 
-void gdextension_initialize(godot::ModuleInitializationLevel p_level)
-{
-	if (p_level == godot::MODULE_INITIALIZATION_LEVEL_SCENE)
-	{
-	}
+#include <godot_cpp/classes/resource_loader.hpp>
+
+#ifdef __APPLE__
+#include "avf/video_stream_avf.hpp"
+#endif
+
+#ifdef __APPLE__
+static Ref<ResourceFormatLoaderAVF> resource_loader_avf;
+#endif
+
+void initialize_native_video_extension(ModuleInitializationLevel p_level) {
+  if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+    return;
+  }
+
+#ifdef __APPLE__
+  GDREGISTER_CLASS(ResourceFormatLoaderAVF);
+  resource_loader_avf.instantiate();
+  ResourceLoader::get_singleton()->add_resource_format_loader(
+      resource_loader_avf, true);
+  GDREGISTER_CLASS(VideoStreamAVF);
+  GDREGISTER_CLASS(VideoStreamPlaybackAVF);
+#endif
 }
 
-void gdextension_terminate(godot::ModuleInitializationLevel p_level)
-{
-	if (p_level == godot::MODULE_INITIALIZATION_LEVEL_SCENE)
-	{
-	}
+void uninitialize_native_video_extension(ModuleInitializationLevel p_level) {
+  if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+    return;
+  }
+
+#ifdef __APPLE__
+  ResourceLoader::get_singleton()->remove_resource_format_loader(
+      resource_loader_avf);
+  resource_loader_avf.unref();
+#endif
 }
 
-extern "C"
-{
-	GDExtensionBool GDE_EXPORT gdextension_init(GDExtensionInterfaceGetProcAddress p_get_proc_address, GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization)
-	{
-		godot::GDExtensionBinding::InitObject init_obj(p_get_proc_address, p_library, r_initialization);
+extern "C" {
+// Initialization
+GDExtensionBool GDE_EXPORT
+native_video_init(GDExtensionInterfaceGetProcAddress p_get_proc_address,
+                  GDExtensionClassLibraryPtr p_library,
+                  GDExtensionInitialization *r_initialization) {
+  GDExtensionBinding::InitObject init_obj(p_get_proc_address, p_library,
+                                          r_initialization);
 
-		init_obj.register_initializer(gdextension_initialize);
-		init_obj.register_terminator(gdextension_terminate);
-		init_obj.set_minimum_library_initialization_level(godot::MODULE_INITIALIZATION_LEVEL_SCENE);
+  init_obj.register_initializer(initialize_native_video_extension);
+  init_obj.register_terminator(uninitialize_native_video_extension);
+  init_obj.set_minimum_library_initialization_level(
+      MODULE_INITIALIZATION_LEVEL_SCENE);
 
-		return init_obj.init();
-	}
+  return init_obj.init();
+}
 }

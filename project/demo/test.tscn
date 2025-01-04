@@ -1,12 +1,18 @@
-[gd_scene load_steps=2 format=3 uid="uid://c7u64tpv6byvb"]
+[gd_scene load_steps=3 format=3 uid="uid://c7u64tpv6byvb"]
 
 [ext_resource type="Script" path="res://demo/test.gd" id="1_b04qc"]
+[ext_resource type="VideoStream" path="res://bbb.mp4" id="2_u67jp"]
 
 [node name="Test" type="Node"]
 script = ExtResource("1_b04qc")
 
-[node name="MyNode" type="MyNode" parent="."]
-
 [node name="Label" type="Label" parent="."]
 offset_right = 40.0
 offset_bottom = 23.0
+text = "hello world!"
+
+[node name="VideoStreamPlayer" type="VideoStreamPlayer" parent="."]
+offset_right = 213.0
+offset_bottom = 119.0
+stream = ExtResource("2_u67jp")
+autoplay = true
