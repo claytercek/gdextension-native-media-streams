@@ -118,6 +118,7 @@ void VideoStreamPlaybackAVF::clear_avf_objects() {
     player_item = nullptr;
     frames_pending = 0;
     state_.playing = false;
+    frame_pool_.reset();
 }
 
 bool VideoStreamPlaybackAVF::setup_video_pipeline(const String &p_file) {
@@ -229,7 +230,6 @@ bool VideoStreamPlaybackAVF::setup_video_pipeline(const String &p_file) {
 
   texture->set_image(img);
 
-  // Add new initialization
   detect_framerate();
   setup_aligned_dimensions();
   
@@ -352,13 +352,6 @@ void VideoStreamPlaybackAVF::convert_bgra_to_rgba_simd(const uint8_t* src, uint8
     }
 }
 
-double VideoStreamPlaybackAVF::predict_next_frame_time(const AVPlayer* player, const std::deque<VideoFrame>& queue) {
-    if (queue.empty()) return 0.0;
-    
-    double current_time = CMTimeGetSeconds([(AVPlayer*)player currentTime]);
-    return current_time + (1.0 / 30.0); // Assuming 30fps, could be made dynamic
-}
-
 /**
  * Processes pending video frames, decoding them from the video buffer
  * and queuing them for presentation. Handles frame timing and synchronization.
@@ -370,11 +363,13 @@ void VideoStreamPlaybackAVF::process_pending_frames() {
     
     AVPlayerItemVideoOutput* output = (AVPlayerItemVideoOutput*)video_output;
     CMTime player_time = [(AVPlayer*)player currentTime];
+    double current_time = CMTimeGetSeconds(player_time);
     
-    while (frame_queue_.frames.size() < FrameQueue::MAX_SIZE && should_decode_next_frame()) {
-        CMTime next_time = CMTimeAdd(player_time, CMTimeMake(frame_queue_.frames.size(), 30));
-        CVPixelBufferRef pixel_buffer = [output copyPixelBufferForItemTime:next_time itemTimeForDisplay:nil];
+    while (frame_queue_.frames.size() < FrameQueue::MAX_SIZE) {
+        double next_time = predict_next_frame_time(current_time, state_.fps);
+        CMTime next_frame_time = CMTimeMakeWithSeconds(next_time, NSEC_PER_SEC);
         
+        CVPixelBufferRef pixel_buffer = [output copyPixelBufferForItemTime:next_frame_time itemTimeForDisplay:nil];
         if (!pixel_buffer) break;
         
         struct ScopedPixelBuffer {
@@ -394,7 +389,7 @@ void VideoStreamPlaybackAVF::process_pending_frames() {
         VideoFrame frame;
         frame.size = Size2i(width, height);
         frame.data.resize(width * height * 4);
-        frame.presentation_time = CMTimeGetSeconds(next_time);
+        frame.presentation_time = next_time;
         
         const uint8_t* src_data = (const uint8_t*)CVPixelBufferGetBaseAddress(pixel_buffer);
         size_t src_stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
@@ -414,6 +409,8 @@ void VideoStreamPlaybackAVF::process_pending_frames() {
         }
         
         frame_queue_.push(std::move(frame));
+        
+        current_time = next_time;
     }
 }
 
@@ -421,9 +418,9 @@ bool VideoStreamPlaybackAVF::should_decode_next_frame() const {
     if (frame_queue_.frames.empty()) return true;
     
     double current_time = CMTimeGetSeconds([(AVPlayer*)player currentTime]);
-    double predicted_time = predict_next_frame_time(player, frame_queue_.frames);
+    double next_frame_time = predict_next_frame_time(current_time, state_.fps);
     
-    return (predicted_time - current_time) < 0.5; // Buffer up to 500ms ahead
+    return (next_frame_time - current_time) < 0.5;
 }
 
 // -----------------------------------------------------------------------------
@@ -568,7 +565,7 @@ void VideoStreamPlaybackAVF::detect_framerate() {
     }
     dispatch_release(semaphore);
     
-    state_.detected_fps = (fps <= 0) ? 30.0f : fps;
+    state_.fps = (fps <= 0) ? 30.0f : fps;
 }
 
 void VideoStreamPlaybackAVF::setup_aligned_dimensions() {
@@ -577,14 +574,6 @@ void VideoStreamPlaybackAVF::setup_aligned_dimensions() {
     
     // Update frame buffer for aligned dimensions
     ensure_frame_buffer(dimensions_.aligned_width, dimensions_.aligned_height);
-}
-
-bool VideoStreamPlaybackAVF::try_hardware_decode() const {
-    if (@available(macOS 10.13, *)) {
-        AVPlayerItemVideoOutput* output = (AVPlayerItemVideoOutput*)video_output;
-        return [output hasNewPixelBufferForItemTime:[(AVPlayer*)player currentTime]];
-    }
-    return false;
 }
 
 void VideoStreamPlaybackAVF::update_texture_from_frame(const VideoFrame& frame) {
