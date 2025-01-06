@@ -5,7 +5,6 @@
 using namespace godot;
 
 #include <godot_cpp/classes/resource_loader.hpp>
-
 #include "video_stream_avf.hpp"
 
 static Ref<ResourceFormatLoaderAVF> resource_loader_avf;
