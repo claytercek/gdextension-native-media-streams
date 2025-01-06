@@ -102,7 +102,7 @@ private:
       bool playing{false};      // Whether video is currently playing
       bool paused{false};       // Whether video is paused
       bool buffering{false};    // Whether video is buffering
-      double time{0.0};         // Current playback time
+      double engine_time{0.0};  // Renamed from time to engine_time for clarity
       float fps{30.0f};         // For frame prediction
   } state_;
   
@@ -195,6 +195,9 @@ private:
   static double predict_next_frame_time(double current_time, float fps) {
       return current_time + (1.0 / fps);
   }
+
+  // Helper to get media time from player
+  double get_media_time() const;
 
 protected:
   static void _bind_methods();

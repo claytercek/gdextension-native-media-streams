@@ -352,6 +352,12 @@ void VideoStreamPlaybackAVF::convert_bgra_to_rgba_simd(const uint8_t* src, uint8
     }
 }
 
+double VideoStreamPlaybackAVF::get_media_time() const {
+    if (!player) return 0.0;
+    CMTime current = [(AVPlayer*)player currentTime];
+    return CMTIME_IS_INVALID(current) ? 0.0 : CMTimeGetSeconds(current);
+}
+
 /**
  * Processes pending video frames, decoding them from the video buffer
  * and queuing them for presentation. Handles frame timing and synchronization.
@@ -444,23 +450,45 @@ void VideoStreamPlaybackAVF::_play() {
     if (!player) return;
 
     if (!state_.playing) {
-        state_.time = 0;
-        [(AVPlayer*)player seekToTime:kCMTimeZero];
-    }
+        std::lock_guard<std::mutex> lock(mutex_);
+        frame_queue_.frames.clear();
+        state_.engine_time = 0.0;  // Reset engine time
 
-    [(AVPlayer*)player play];
-    state_.playing = true;
-    state_.paused = false;
+        CMTime zero_time = kCMTimeZero;
+        [(AVPlayer*)player seekToTime:zero_time toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero 
+            completionHandler:^(BOOL finished) {
+                if (finished) {
+                    [(AVPlayer*)player play];
+                    state_.playing = true;
+                    state_.paused = false;
+                }
+            }
+        ];
+    } else {
+        [(AVPlayer*)player play];
+        state_.playing = true;
+        state_.paused = false;
+    }
 }
 
 void VideoStreamPlaybackAVF::_stop() {
     if (!player) return;
 
     [(AVPlayer*)player pause];
-    [(AVPlayer*)player seekToTime:kCMTimeZero];
+    
+    // Clear frame queue and reset state
+    std::lock_guard<std::mutex> lock(mutex_);
+    frame_queue_.frames.clear();
+    state_.engine_time = 0;
     state_.playing = false;
     state_.paused = false;
-    state_.time = 0;
+
+    // Use completion handler to ensure seek completes
+    [(AVPlayer*)player seekToTime:kCMTimeZero 
+        completionHandler:^(BOOL finished) {
+            // Nothing additional needed here
+        }
+    ];
 }
 
 void VideoStreamPlaybackAVF::_set_paused(bool p_paused) {
@@ -493,8 +521,28 @@ void VideoStreamPlaybackAVF::_update(double p_delta) {
         return;
     }
 
-    state_.time += p_delta;
+    state_.engine_time += p_delta;
     process_pending_frames();
+    
+    // Use media time for playback position checking
+    double media_time = get_media_time();
+    double duration = _get_length();
+    
+    if (media_time >= duration) {
+        state_.playing = false;
+        state_.engine_time = 0.0;
+        return;
+    }
+    
+    // Check if we've reached the end of playback
+    double current = _get_playback_position();
+    
+    if (current >= duration) {
+        // End of playback reached
+        UtilityFunctions::print("end of playback reached");
+        state_.playing = false;
+        return;
+    }
     
     if (!frame_queue_.empty()) {
         const VideoFrame& frame = frame_queue_.front();
@@ -624,15 +672,7 @@ double VideoStreamPlaybackAVF::_get_length() const {
 }
 
 double VideoStreamPlaybackAVF::_get_playback_position() const {
-  if (!player) {
-    return 0.0;
-  }
-
-  CMTime current = [(AVPlayer *)player currentTime];
-  if (CMTIME_IS_INVALID(current)) {
-    return 0.0;
-  }
-  return CMTimeGetSeconds(current);
+    return get_media_time();  // Always use actual media time for position
 }
 
 Ref<Texture2D> VideoStreamPlaybackAVF::_get_texture() const { return texture; }
