@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://c7u64tpv6byvb"]
 
-[ext_resource type="VideoStream" path="res://bbb.mp4" id="2_uhi02"]
+[ext_resource type="VideoStream" path="res://videos/language_tracks.mp4" id="1_vxlic"]
 
 [node name="Test" type="Node"]
 
@@ -10,7 +10,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-stream = ExtResource("2_uhi02")
+stream = ExtResource("1_vxlic")
 autoplay = true
 expand = true
 loop = true

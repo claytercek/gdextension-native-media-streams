@@ -104,6 +104,8 @@ private:
       bool buffering{false};    // Whether video is buffering
       double engine_time{0.0};  // Renamed from time to engine_time for clarity
       float fps{30.0f};         // For frame prediction
+      int current_audio_track{0};
+      bool audio_enabled{true};
   } state_;
   
   // Video dimensions and alignment
@@ -159,6 +161,14 @@ private:
   AVPlayerItem* player_item{nullptr};
   AVPlayerItemVideoOutput* video_output{nullptr};
 
+  // Audio track info
+  struct AudioTrack {
+      int index;
+      String language;
+      String name;
+  };
+  std::vector<AudioTrack> audio_tracks;
+
   // Private helper functions
   void clear_avf_objects();
   bool setup_video_pipeline(const String &p_file);
@@ -198,6 +208,10 @@ private:
 
   // Helper to get media time from player
   double get_media_time() const;
+
+  bool initialization_complete{false}; // Flag to indicate initialization completion
+  bool play_requested{false}; // Flag to indicate if play was requested before initialization
+  int audio_track = 0; // Store the selected audio track index
 
 protected:
   static void _bind_methods();

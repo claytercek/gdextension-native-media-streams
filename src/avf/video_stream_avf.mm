@@ -38,6 +38,7 @@ void AVFResources::clear() {
  * - Configuring video output
  */
 bool AVFResources::initialize(const String& path) {
+    UtilityFunctions::print_verbose("AVFResources::initialize() called with path: " + path);
     clear();
     
     @autoreleasepool {
@@ -53,6 +54,9 @@ bool AVFResources::initialize(const String& path) {
         __block bool success = false;
         
         [asset loadTracksWithMediaType:AVMediaTypeVideo completionHandler:^(NSArray<AVAssetTrack*>* tracks, NSError* error) {
+            if (!error && tracks.count > 0) {
+                UtilityFunctions::print_verbose("AVFResources::initialize() Successfully loaded " + itos(tracks.count) + " video tracks.");
+            }
             success = (!error && tracks.count > 0);
             dispatch_semaphore_signal(semaphore);
         }];
@@ -122,123 +126,168 @@ void VideoStreamPlaybackAVF::clear_avf_objects() {
 }
 
 bool VideoStreamPlaybackAVF::setup_video_pipeline(const String &p_file) {
-  NSString *path = [NSString stringWithUTF8String:p_file.utf8().get_data()];
-  NSURL *url = [NSURL fileURLWithPath:path];
+    UtilityFunctions::print_verbose("VideoStreamPlaybackAVF::setup_video_pipeline() called for file: " + p_file);
+    NSString *path = [NSString stringWithUTF8String:p_file.utf8().get_data()];
+    NSURL *url = [NSURL fileURLWithPath:path];
 
-  // Create asset
-  AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
-  if (!asset) {
-    UtilityFunctions::printerr("Failed to create asset for: ", p_file);
-    return false;
-  }
+    // Create asset
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
+    if (!asset) {
+        UtilityFunctions::printerr("Failed to create asset for: ", p_file);
+        return false;
+    }
 
-  // Load video track
-  dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-  __block bool success = false;
-  __block CGSize track_size = CGSizeZero;
+    // Create a dispatch group to synchronize audio and video track loading
+    dispatch_group_t group = dispatch_group_create();
 
-  [asset loadTracksWithMediaType:AVMediaTypeVideo
-               completionHandler:^(NSArray<AVAssetTrack *> *tracks,
-                                   NSError *error) {
-                 if (error || tracks.count == 0) {
-                 UtilityFunctions::printerr(
-                       "Error loading video tracks for: ", p_file);
-                   if (error) {
-                     UtilityFunctions::printerr(error.localizedDescription.UTF8String);
-                     UtilityFunctions::printerr(error.localizedFailureReason.UTF8String);
-                   } else {
-                     UtilityFunctions::printerr("No video tracks found");
-                   }
+    __block bool video_success = false;
+    __block bool audio_success = false;
 
-                   dispatch_semaphore_signal(semaphore);
-                   return;
-                 }
+    // Load video track asynchronously
+    dispatch_group_enter(group);
+    [asset loadTracksWithMediaType:AVMediaTypeVideo completionHandler:^(NSArray<AVAssetTrack *> *tracks, NSError *error) {
+        UtilityFunctions::print_verbose("VideoStreamPlaybackAVF::setup_video_pipeline() Tracks loaded with count: " + itos(tracks.count));
+        if (error || tracks.count == 0) {
+            UtilityFunctions::printerr("Error loading video tracks for: ", p_file);
+            if (error) {
+                UtilityFunctions::printerr(error.localizedDescription.UTF8String);
+                UtilityFunctions::printerr(error.localizedFailureReason.UTF8String);
+            } else {
+                UtilityFunctions::printerr("No video tracks found");
+            }
+        } else {
+            AVAssetTrack *video_track = tracks.firstObject;
+            CGSize track_size = video_track.naturalSize;
 
-                 AVAssetTrack *video_track = tracks.firstObject;
-                 track_size = video_track.naturalSize;
-                 success = true;
-                 dispatch_semaphore_signal(semaphore);
-               }];
+            // Update size with alignment
+            dimensions_.frame.x = static_cast<int32_t>(track_size.width + 3) & ~3;
+            dimensions_.frame.y = static_cast<int32_t>(track_size.height);
 
-  // Wait for track loading
-  dispatch_time_t timeout =
-      dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC));
-  if (dispatch_semaphore_wait(semaphore, timeout) != 0) {
-    dispatch_release(semaphore);
-    UtilityFunctions::printerr("Timeout while loading video tracks");
-    return false;
-  }
-  dispatch_release(semaphore);
+            // Configure video output
+            NSDictionary *attributes = @{
+                (id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
+                (id)kCVPixelBufferMetalCompatibilityKey : @YES,
+                (id)kCVPixelBufferWidthKey : @(dimensions_.frame.x),
+                (id)kCVPixelBufferHeightKey : @(dimensions_.frame.y),
+                (id)kCVPixelBufferCGBitmapContextCompatibilityKey : @YES
+            };
 
-  if (!success) {
-    UtilityFunctions::printerr("Failed to load video tracks for file: ", p_file);
-    return false;
-  }
+            AVPlayerItemVideoOutput *output = [[AVPlayerItemVideoOutput alloc]
+                initWithPixelBufferAttributes:attributes];
 
-  // Update size with alignment
-  dimensions_.frame.x = static_cast<int32_t>(track_size.width + 3) & ~3;
-  dimensions_.frame.y = static_cast<int32_t>(track_size.height);
+            if (!output) {
+                UtilityFunctions::printerr("Failed to create video output");
+            } else {
+                // Create player item and player
+                AVPlayerItem *item = [AVPlayerItem playerItemWithAsset:asset];
+                if (!item) {
+                    [output release];
+                    UtilityFunctions::printerr("Failed to create player item");
+                } else {
+                    [item addOutput:output];
 
-  // Configure video output
-  NSDictionary *attributes = @{
-    (id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
-    (id)kCVPixelBufferMetalCompatibilityKey : @YES,
-    (id)kCVPixelBufferWidthKey : @(dimensions_.frame.x),
-    (id)kCVPixelBufferHeightKey : @(dimensions_.frame.y),
-    (id)kCVPixelBufferCGBitmapContextCompatibilityKey : @YES
-  };
+                    AVPlayer *avf_player = [[AVPlayer alloc] initWithPlayerItem:item];
+                    if (!avf_player) {
+                        [output release];
+                        UtilityFunctions::printerr("Failed to create player");
+                    } else {
+                        // Store objects
+                        video_output = output;
+                        player_item = item;
+                        player = avf_player;
 
-  AVPlayerItemVideoOutput *output = [[AVPlayerItemVideoOutput alloc]
-      initWithPixelBufferAttributes:attributes];
+                        // Create initial texture
+                        ensure_frame_buffer(dimensions_.frame.x, dimensions_.frame.y);
+                        Ref<Image> img = Image::create_empty(dimensions_.frame.x, dimensions_.frame.y, false,
+                                                             Image::FORMAT_RGBA8);
+                        if (img.is_null()) {
+                            clear_avf_objects();
+                            UtilityFunctions::printerr("Failed to create initial texture");
+                        } else {
+                            texture->set_image(img);
+                            detect_framerate();
+                            setup_aligned_dimensions();
 
-  if (!output) {
-    UtilityFunctions::printerr("Failed to create video output");
-    return false;
-  }
+                            // Try enabling hardware acceleration
+                            if (@available(macOS 10.13, *)) {
+                                [(AVPlayer*)player setAutomaticallyWaitsToMinimizeStalling:NO];
+                            }
 
-  // Create player item and player
-  AVPlayerItem *item = [AVPlayerItem playerItemWithAsset:asset];
-  if (!item) {
-    [output release];
-    UtilityFunctions::printerr("Failed to create player item");
-    return false;
-  }
+                            video_success = true;
+                        }
+                    }
+                }
+            }
+        }
+        dispatch_group_leave(group);
+    }];
 
-  [item addOutput:output];
+    // Load audio tracks asynchronously
+    dispatch_group_enter(group);
+    [asset loadTracksWithMediaType:AVMediaTypeAudio completionHandler:^(NSArray<AVAssetTrack *> *loaded_tracks, NSError *error) {
+        UtilityFunctions::print_verbose("Loaded audio tracks count: " + itos(loaded_tracks.count));
+        if (error) {
+            UtilityFunctions::printerr("Error loading audio tracks: ", error.localizedDescription.UTF8String);
+        } else {
+            audio_tracks.clear();
+            for (NSUInteger i = 0; i < loaded_tracks.count; i++) {
+                AVAssetTrack* track = loaded_tracks[i];
+                
+                AudioTrack info;
+                info.index = i;
+                
+                // Get language
+                NSString* language = track.languageCode;
+                info.language = language ? String(language.UTF8String) : "unknown";
+                
+                // Get name/title if available
+                NSString* name = nil;
+                for (AVMetadataItem* item in track.metadata) {
+                    if ([item.commonKey isEqualToString:AVMetadataCommonKeyTitle]) {
+                        name = (NSString*)item.value;
+                        break;
+                    }
+                }
+                info.name = name ? String(name.UTF8String) : String("Track ") + String::num_int64(i + 1);
+                
+                audio_tracks.push_back(info);
+            }
 
-  AVPlayer *avf_player = [[AVPlayer alloc] initWithPlayerItem:item];
-  if (!avf_player) {
-    [output release];
-    UtilityFunctions::printerr("Failed to create player");
-    return false;
-  }
+            // Select the initial audio track
+            if (audio_track < 0 || audio_track >= (int)audio_tracks.size()) {
+                audio_track = 0; // Default to the first track if the selected track is invalid
+            }
+            if (!audio_tracks.empty()) {
+                [asset loadMediaSelectionGroupForMediaCharacteristic:AVMediaCharacteristicAudible completionHandler:^(AVMediaSelectionGroup *audioGroup, NSError *error) {
+                    if (audioGroup) {
+                        NSArray<AVMediaSelectionOption *> *options = audioGroup.options;
+                        if (audio_track < options.count) {
+                            AVMediaSelectionOption *selectedOption = options[audio_track];
+                            [player_item selectMediaOption:selectedOption inMediaSelectionGroup:audioGroup];
+                        }
+                    }
+                }];
+            }
+            audio_success = true;
+        }
+        dispatch_group_leave(group);
+    }];
 
-  // Store objects
-  video_output = output;
-  player_item = item;
-  player = avf_player;
+    // Wait for both tasks to complete
+    dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+        if (video_success && audio_success) {
+            UtilityFunctions::print_verbose("VideoStreamPlaybackAVF::setup_video_pipeline() completed successfully.");
+            initialization_complete = true;
+            if (play_requested) {
+                _play();
+            }
+        } else {
+            clear_avf_objects();
+            UtilityFunctions::printerr("Failed to setup video pipeline for '" + p_file + "'.");
+        }
+    });
 
-  // Create initial texture
-  ensure_frame_buffer(dimensions_.frame.x, dimensions_.frame.y);
-  Ref<Image> img = Image::create_empty(dimensions_.frame.x, dimensions_.frame.y, false,
-                                       Image::FORMAT_RGBA8);
-  if (img.is_null()) {
-    clear_avf_objects();
-    UtilityFunctions::printerr("Failed to create initial texture");
-    return false;
-  }
-
-  texture->set_image(img);
-
-  detect_framerate();
-  setup_aligned_dimensions();
-  
-  // Try enabling hardware acceleration
-  if (@available(macOS 10.13, *)) {
-      [(AVPlayer*)player setAutomaticallyWaitsToMinimizeStalling:NO];
-  }
-
-  return true;
+    return true;
 }
 
 // -----------------------------------------------------------------------------
@@ -447,7 +496,13 @@ void VideoStreamPlaybackAVF::set_file(const String &p_file) {
 }
 
 void VideoStreamPlaybackAVF::_play() {
-    if (!player) return;
+    UtilityFunctions::print_verbose("VideoStreamPlaybackAVF::_play() invoked.");
+
+    if (!initialization_complete) {
+        UtilityFunctions::print_verbose("VideoStreamPlaybackAVF::_play() initialization not complete, deferring play.");
+        play_requested = true;
+        return;
+    }
 
     if (!state_.playing) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -584,26 +639,19 @@ void VideoStreamPlaybackAVF::update_texture(size_t width, size_t height) {
 }
 
 void VideoStreamPlaybackAVF::detect_framerate() {
+    UtilityFunctions::print_verbose("VideoStreamPlaybackAVF::detect_framerate() invoked.");
     if (!player_item) return;
     
-    __block float fps = 30.0f;
-    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-    
     [[player_item asset] loadTracksWithMediaType:AVMediaTypeVideo completionHandler:^(NSArray<AVAssetTrack *> *tracks, NSError *error) {
+        UtilityFunctions::print_verbose("VideoStreamPlaybackAVF::detect_framerate() loaded tracks: " + itos(tracks.count));
         if (!error && tracks.count > 0) {
             AVAssetTrack *videoTrack = tracks.firstObject;
-            fps = videoTrack.nominalFrameRate;
+            state_.fps = videoTrack.nominalFrameRate;
+        } else {
+            state_.fps = 30.0f;
+            UtilityFunctions::print_verbose("VideoStreamPlaybackAVF::detect_framerate() Timeout or error while getting frame rate");
         }
-        dispatch_semaphore_signal(semaphore);
     }];
-    
-    dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC));
-    if (dispatch_semaphore_wait(semaphore, timeout) != 0) {
-        UtilityFunctions::print_verbose("Timeout while getting frame rate");
-    }
-    dispatch_release(semaphore);
-    
-    state_.fps = (fps <= 0) ? 30.0f : fps;
 }
 
 void VideoStreamPlaybackAVF::setup_aligned_dimensions() {
@@ -671,88 +719,60 @@ Ref<Texture2D> VideoStreamPlaybackAVF::_get_texture() const { return texture; }
 // Audio Handling
 // -----------------------------------------------------------------------------
 void VideoStreamPlaybackAVF::_set_audio_track(int p_idx) {
-  // TODO: Implement if needed
+    // Set the audio track index but do not apply it dynamically
+    audio_track = p_idx;
 }
 
 int VideoStreamPlaybackAVF::_get_channels() const {
-  if (!player_item) {
-    return 2;
-  }
+    if (!player_item) {
+        return 2;
+    }
 
-  __block int channels = 2;
-  dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    __block int channels = 2;
 
-  AVAsset *asset = player_item.asset;
-  [asset
-      loadTracksWithMediaType:AVMediaTypeAudio
-            completionHandler:^(NSArray<AVAssetTrack *> *tracks,
-                                NSError *error) {
-              if (!error && tracks.count > 0) {
-                AVAssetTrack *audio_track = tracks.firstObject;
-                CMFormatDescriptionRef format =
-                    (__bridge CMFormatDescriptionRef)
-                        audio_track.formatDescriptions.firstObject;
+    [[player_item asset] loadTracksWithMediaType:AVMediaTypeAudio completionHandler:^(NSArray<AVAssetTrack *> *tracks, NSError *error) {
+        if (!error && tracks.count > 0) {
+            AVAssetTrack *audio_track = tracks.firstObject;
+            CMFormatDescriptionRef format = (__bridge CMFormatDescriptionRef)audio_track.formatDescriptions.firstObject;
 
-                if (format) {
-                  const AudioStreamBasicDescription *asbd =
-                      CMAudioFormatDescriptionGetStreamBasicDescription(format);
-                  if (asbd) {
+            if (format) {
+                const AudioStreamBasicDescription *asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format);
+                if (asbd) {
                     channels = asbd->mChannelsPerFrame;
-                  }
                 }
-              }
-              dispatch_semaphore_signal(semaphore);
-            }];
+            }
+        } else {
+            UtilityFunctions::print_verbose("VideoStreamPlaybackAVF::_get_channels() Timeout or error while getting audio channel count");
+        }
+    }];
 
-  // Wait with timeout
-  dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC));
-  if (dispatch_semaphore_wait(semaphore, timeout) != 0) {
-    UtilityFunctions::print_verbose(
-        "Timeout while getting audio channel count");
-  }
-  dispatch_release(semaphore);
-
-  return channels;
+    return channels;
 }
 
 int VideoStreamPlaybackAVF::_get_mix_rate() const {
-  if (!player_item) {
-    return 44100;
-  }
+    if (!player_item) {
+        return 44100;
+    }
 
-  __block int sample_rate = 44100;
-  dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    __block int sample_rate = 44100;
 
-  AVAsset *asset = player_item.asset;
-  [asset
-      loadTracksWithMediaType:AVMediaTypeAudio
-            completionHandler:^(NSArray<AVAssetTrack *> *tracks,
-                                NSError *error) {
-              if (!error && tracks.count > 0) {
-                AVAssetTrack *audio_track = tracks.firstObject;
-                CMFormatDescriptionRef format =
-                    (__bridge CMFormatDescriptionRef)
-                        audio_track.formatDescriptions.firstObject;
+    [[player_item asset] loadTracksWithMediaType:AVMediaTypeAudio completionHandler:^(NSArray<AVAssetTrack *> *tracks, NSError *error) {
+        if (!error && tracks.count > 0) {
+            AVAssetTrack *audio_track = tracks.firstObject;
+            CMFormatDescriptionRef format = (__bridge CMFormatDescriptionRef)audio_track.formatDescriptions.firstObject;
 
-                if (format) {
-                  const AudioStreamBasicDescription *asbd =
-                      CMAudioFormatDescriptionGetStreamBasicDescription(format);
-                  if (asbd) {
+            if (format) {
+                const AudioStreamBasicDescription *asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format);
+                if (asbd) {
                     sample_rate = asbd->mSampleRate;
-                  }
                 }
-              }
-              dispatch_semaphore_signal(semaphore);
-            }];
+            }
+        } else {
+            UtilityFunctions::print_verbose("VideoStreamPlaybackAVF::_get_mix_rate() Timeout or error while getting audio sample rate");
+        }
+    }];
 
-  // Wait with timeout
-  dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC));
-  if (dispatch_semaphore_wait(semaphore, timeout) != 0) {
-    UtilityFunctions::print_verbose("Timeout while getting audio sample rate");
-  }
-  dispatch_release(semaphore);
-
-  return sample_rate;
+    return sample_rate;
 }
 
 // -----------------------------------------------------------------------------
