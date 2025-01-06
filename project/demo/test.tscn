@@ -14,3 +14,4 @@ stream = ExtResource("2_uhi02")
 autoplay = true
 expand = true
 loop = true
+buffering_msec = 1000

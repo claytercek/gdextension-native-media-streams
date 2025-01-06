@@ -524,26 +524,6 @@ void VideoStreamPlaybackAVF::_update(double p_delta) {
     state_.engine_time += p_delta;
     process_pending_frames();
     
-    // Use media time for playback position checking
-    double media_time = get_media_time();
-    double duration = _get_length();
-    
-    if (media_time >= duration) {
-        state_.playing = false;
-        state_.engine_time = 0.0;
-        return;
-    }
-    
-    // Check if we've reached the end of playback
-    double current = _get_playback_position();
-    
-    if (current >= duration) {
-        // End of playback reached
-        UtilityFunctions::print("end of playback reached");
-        state_.playing = false;
-        return;
-    }
-    
     if (!frame_queue_.empty()) {
         const VideoFrame& frame = frame_queue_.front();
         double current_time = CMTimeGetSeconds([(AVPlayer*)player currentTime]);
@@ -566,6 +546,16 @@ void VideoStreamPlaybackAVF::_update(double p_delta) {
             
             frame_queue_.pop_front();
         }
+    }
+
+    // Use media time for playback position checking
+    double media_time = get_media_time();
+    double duration = _get_length();
+    
+    if (media_time >= duration) {
+        state_.playing = false;
+        state_.engine_time = 0.0;
+        return;
     }
 }
 
