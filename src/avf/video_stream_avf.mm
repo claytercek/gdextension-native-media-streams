@@ -10,82 +10,6 @@
 using namespace godot;
 
 // -----------------------------------------------------------------------------
-// AVFResources Implementation
-// -----------------------------------------------------------------------------
-AVFResources::~AVFResources() {
-    clear();
-}
-
-void AVFResources::clear() {
-    if (player_) {
-        [(AVPlayer*)player_ pause];
-        [(AVPlayer*)player_ release];
-        player_ = nullptr;
-    }
-    
-    if (output_) {
-        [(AVPlayerItemVideoOutput*)output_ release];
-        output_ = nullptr;
-    }
-    
-    item_ = nullptr; // owned by player
-}
-
-/**
- * Initializes AV resources for video playback. This includes:
- * - Creating and configuring the AVAsset
- * - Setting up the AVPlayer and AVPlayerItem
- * - Configuring video output
- */
-bool AVFResources::initialize(const String& path) {
-    UtilityFunctions::print_verbose("AVFResources::initialize() called with path: " + path);
-    clear();
-    
-    @autoreleasepool {
-        NSString* ns_path = [NSString stringWithUTF8String:path.utf8().get_data()];
-        NSURL* url = [NSURL fileURLWithPath:ns_path];
-        
-        // Setup asset
-        AVURLAsset* asset = [AVURLAsset URLAssetWithURL:url options:nil];
-        if (!asset) return false;
-        
-        // Load tracks asynchronously
-        dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-        __block bool success = false;
-        
-        [asset loadTracksWithMediaType:AVMediaTypeVideo completionHandler:^(NSArray<AVAssetTrack*>* tracks, NSError* error) {
-            if (!error && tracks.count > 0) {
-                UtilityFunctions::print_verbose("AVFResources::initialize() Successfully loaded " + itos(tracks.count) + " video tracks.");
-            }
-            success = (!error && tracks.count > 0);
-            dispatch_semaphore_signal(semaphore);
-        }];
-        
-        // Wait with timeout
-        if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
-            dispatch_release(semaphore);
-            return false;
-        }
-        dispatch_release(semaphore);
-        
-        if (!success) return false;
-        
-        // Create and configure components
-        AVPlayerItem* item = [AVPlayerItem playerItemWithAsset:asset];
-        if (!item) return false;
-        
-        AVPlayer* player = [[AVPlayer alloc] initWithPlayerItem:item];
-        if (!player) return false;
-        
-        // Store the created objects
-        player_ = player;
-        item_ = item;
-        
-        return true;
-    }
-}
-
-// -----------------------------------------------------------------------------
 // VideoStreamAVF Implementation
 // -----------------------------------------------------------------------------
 void VideoStreamAVF::_bind_methods() {
@@ -120,9 +44,8 @@ void VideoStreamPlaybackAVF::clear_avf_objects() {
     }
 
     player_item = nullptr;
-    frames_pending = 0;
-    state_.playing = false;
-    frame_pool_.reset();
+    state.playing = false;
+    frame_pool.reset();
 }
 
 bool VideoStreamPlaybackAVF::setup_video_pipeline(const String &p_file) {
@@ -160,15 +83,15 @@ bool VideoStreamPlaybackAVF::setup_video_pipeline(const String &p_file) {
             CGSize track_size = video_track.naturalSize;
 
             // Update size with alignment
-            dimensions_.frame.x = static_cast<int32_t>(track_size.width + 3) & ~3;
-            dimensions_.frame.y = static_cast<int32_t>(track_size.height);
+            dimensions.frame.x = static_cast<int32_t>(track_size.width + 3) & ~3;
+            dimensions.frame.y = static_cast<int32_t>(track_size.height);
 
             // Configure video output
             NSDictionary *attributes = @{
                 (id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
                 (id)kCVPixelBufferMetalCompatibilityKey : @YES,
-                (id)kCVPixelBufferWidthKey : @(dimensions_.frame.x),
-                (id)kCVPixelBufferHeightKey : @(dimensions_.frame.y),
+                (id)kCVPixelBufferWidthKey : @(dimensions.frame.x),
+                (id)kCVPixelBufferHeightKey : @(dimensions.frame.y),
                 (id)kCVPixelBufferCGBitmapContextCompatibilityKey : @YES
             };
 
@@ -197,8 +120,8 @@ bool VideoStreamPlaybackAVF::setup_video_pipeline(const String &p_file) {
                         player = avf_player;
 
                         // Create initial texture
-                        ensure_frame_buffer(dimensions_.frame.x, dimensions_.frame.y);
-                        Ref<Image> img = Image::create_empty(dimensions_.frame.x, dimensions_.frame.y, false,
+                        ensure_frame_buffer(dimensions.frame.x, dimensions.frame.y);
+                        Ref<Image> img = Image::create_empty(dimensions.frame.x, dimensions.frame.y, false,
                                                              Image::FORMAT_RGBA8);
                         if (img.is_null()) {
                             clear_avf_objects();
@@ -414,14 +337,12 @@ double VideoStreamPlaybackAVF::get_media_time() const {
 void VideoStreamPlaybackAVF::process_pending_frames() {
     if (!video_output || !player_item) return;
     
-    std::lock_guard<std::mutex> lock(mutex_);  // Use mutex_ instead of mutex_
-    
     AVPlayerItemVideoOutput* output = (AVPlayerItemVideoOutput*)video_output;
     CMTime player_time = [(AVPlayer*)player currentTime];
     double current_time = CMTimeGetSeconds(player_time);
     
-    while (frame_queue_.frames.size() < FrameQueue::MAX_SIZE) {
-        double next_time = predict_next_frame_time(current_time, state_.fps);
+    while (frame_queue.size() < FrameQueue::MAX_SIZE) {
+        double next_time = predict_next_frame_time(current_time, state.fps);
         CMTime next_frame_time = CMTimeMakeWithSeconds(next_time, NSEC_PER_SEC);
         
         CVPixelBufferRef pixel_buffer = [output copyPixelBufferForItemTime:next_frame_time itemTimeForDisplay:nil];
@@ -463,17 +384,17 @@ void VideoStreamPlaybackAVF::process_pending_frames() {
             }
         }
         
-        frame_queue_.push(std::move(frame));
+        frame_queue.push(std::move(frame));
         
         current_time = next_time;
     }
 }
 
 bool VideoStreamPlaybackAVF::should_decode_next_frame() const {
-    if (frame_queue_.frames.empty()) return true;
+    if (frame_queue.empty()) return true;
     
     double current_time = CMTimeGetSeconds([(AVPlayer*)player currentTime]);
-    double next_frame_time = predict_next_frame_time(current_time, state_.fps);
+    double next_frame_time = predict_next_frame_time(current_time, state.fps);
     
     return (next_frame_time - current_time) < 0.5;
 }
@@ -504,25 +425,24 @@ void VideoStreamPlaybackAVF::_play() {
         return;
     }
 
-    if (!state_.playing) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        frame_queue_.frames.clear();
-        state_.engine_time = 0.0;  // Reset engine time
+    if (!state.playing) {
+        frame_queue.clear();
+        state.engine_time = 0.0;  // Reset engine time
 
         CMTime zero_time = kCMTimeZero;
         [(AVPlayer*)player seekToTime:zero_time toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero 
             completionHandler:^(BOOL finished) {
                 if (finished) {
                     [(AVPlayer*)player play];
-                    state_.playing = true;
-                    state_.paused = false;
+                    state.playing = true;
+                    state.paused = false;
                 }
             }
         ];
     } else {
         [(AVPlayer*)player play];
-        state_.playing = true;
-        state_.paused = false;
+        state.playing = true;
+        state.paused = false;
     }
 }
 
@@ -532,11 +452,10 @@ void VideoStreamPlaybackAVF::_stop() {
     [(AVPlayer*)player pause];
     
     // Clear frame queue and reset state
-    std::lock_guard<std::mutex> lock(mutex_);
-    frame_queue_.frames.clear();
-    state_.engine_time = 0;
-    state_.playing = false;
-    state_.paused = false;
+    frame_queue.clear();
+    state.engine_time = 0;
+    state.playing = false;
+    state.paused = false;
 
     // Use completion handler to ensure seek completes
     [(AVPlayer*)player seekToTime:kCMTimeZero 
@@ -547,14 +466,14 @@ void VideoStreamPlaybackAVF::_stop() {
 }
 
 void VideoStreamPlaybackAVF::_set_paused(bool p_paused) {
-    if (!player || state_.paused == p_paused) return;
+    if (!player || state.paused == p_paused) return;
 
     if (p_paused) {
         [(AVPlayer*)player pause];
     } else {
         [(AVPlayer*)player play];
     }
-    state_.paused = p_paused;
+    state.paused = p_paused;
 }
 
 void VideoStreamPlaybackAVF::_seek(double p_time) {
@@ -572,35 +491,18 @@ void VideoStreamPlaybackAVF::_seek(double p_time) {
 }
 
 void VideoStreamPlaybackAVF::_update(double p_delta) {
-    if (!state_.playing || state_.paused || !player) {
+    if (!state.playing || state.paused || !player) {
         return;
     }
 
-    state_.engine_time += p_delta;
+    state.engine_time += p_delta;
     process_pending_frames();
     
-    if (!frame_queue_.empty()) {
-        const VideoFrame& frame = frame_queue_.front();
-        double current_time = CMTimeGetSeconds([(AVPlayer*)player currentTime]);
-        
-        if (current_time >= frame.presentation_time) {
-            // Update texture with the frame
-            PackedByteArray pba;
-            pba.resize(frame.data.size());
-            memcpy(pba.ptrw(), frame.data.data(), frame.data.size());
-            
-            Ref<Image> img = Image::create_from_data(
-                frame.size.x, frame.size.y,
-                false, Image::FORMAT_RGBA8,
-                pba
-            );
-            
-            if (img.is_valid()) {
-                texture->update(img);
-            }
-            
-            frame_queue_.pop_front();
-        }
+    double current_time = CMTimeGetSeconds([(AVPlayer*)player currentTime]);
+    const std::optional<VideoFrame> frame = frame_queue.try_pop_next_frame(current_time);
+
+    if (frame) {
+        update_texture_from_frame(*frame);
     }
 
     // Use media time for playback position checking
@@ -608,8 +510,8 @@ void VideoStreamPlaybackAVF::_update(double p_delta) {
     double duration = _get_length();
     
     if (media_time >= duration) {
-        state_.playing = false;
-        state_.engine_time = 0.0;
+        state.playing = false;
+        state.engine_time = 0.0;
         return;
     }
 }
@@ -634,7 +536,6 @@ void VideoStreamPlaybackAVF::update_texture(size_t width, size_t height) {
 
   if (img.is_valid()) {
     texture->update(img);
-    frames_pending = 1;
   }
 }
 
@@ -646,56 +547,28 @@ void VideoStreamPlaybackAVF::detect_framerate() {
         UtilityFunctions::print_verbose("VideoStreamPlaybackAVF::detect_framerate() loaded tracks: " + itos(tracks.count));
         if (!error && tracks.count > 0) {
             AVAssetTrack *videoTrack = tracks.firstObject;
-            state_.fps = videoTrack.nominalFrameRate;
+            state.fps = videoTrack.nominalFrameRate;
         } else {
-            state_.fps = 30.0f;
+            state.fps = 30.0f;
             UtilityFunctions::print_verbose("VideoStreamPlaybackAVF::detect_framerate() Timeout or error while getting frame rate");
         }
     }];
 }
 
 void VideoStreamPlaybackAVF::setup_aligned_dimensions() {
-    dimensions_.aligned_width = align_dimension(dimensions_.frame.x);
-    dimensions_.aligned_height = align_dimension(dimensions_.frame.y);
+    dimensions.aligned_width = align_dimension(dimensions.frame.x);
+    dimensions.aligned_height = align_dimension(dimensions.frame.y);
     
     // Update frame buffer for aligned dimensions
-    ensure_frame_buffer(dimensions_.aligned_width, dimensions_.aligned_height);
-}
-
-void VideoStreamPlaybackAVF::update_texture_from_frame(const VideoFrame& frame) {
-    // Create packed byte array without copying data
-    PackedByteArray pba;
-    pba.resize(frame.data.size());
-    memcpy(pba.ptrw(), frame.data.data(), frame.data.size());
-    
-    // Update texture directly if possible
-    if (texture->get_size() == frame.size) {
-        Ref<Image> img = Image::create_from_data(
-            frame.size.x, frame.size.y,
-            false, Image::FORMAT_RGBA8,
-            pba
-        );
-        if (img.is_valid()) {
-            texture->update(img);
-        }
-    } else {
-        Ref<Image> img = Image::create_from_data(
-            frame.size.x, frame.size.y,
-            false, Image::FORMAT_RGBA8,
-            pba
-        );
-        if (img.is_valid()) {
-            texture->set_image(img);
-        }
-    }
+    ensure_frame_buffer(dimensions.aligned_width, dimensions.aligned_height);
 }
 
 // -----------------------------------------------------------------------------
 // Getters
 // -----------------------------------------------------------------------------
-bool VideoStreamPlaybackAVF::_is_playing() const { return state_.playing; }
+bool VideoStreamPlaybackAVF::_is_playing() const { return state.playing; }
 
-bool VideoStreamPlaybackAVF::_is_paused() const { return state_.paused; }
+bool VideoStreamPlaybackAVF::_is_paused() const { return state.paused; }
 
 double VideoStreamPlaybackAVF::_get_length() const {
   if (!player_item) {

@@ -23,8 +23,8 @@ cdb = env.CompilationDatabase()
 Alias('cdb', cdb)
 
 # Add source files
-env.Append(CPPPATH=["src/avf"])
-sources = Glob("src/*.cpp")
+env.Append(CPPPATH=["src/"])
+sources = Glob("src/common/*.cpp")
 
 # Platform-specific configurations
 if env["platform"] == "macos":
