@@ -9,8 +9,8 @@ namespace godot {
 /**
  * Base class for platform-specific video playback implementations
  */
-class VideoStreamNative : public VideoStreamPlayback {
-    GDCLASS(VideoStreamNative, VideoStreamPlayback)
+class VideoStreamPlaybackNative : public VideoStreamPlayback {
+    GDCLASS(VideoStreamPlaybackNative, VideoStreamPlayback)
 
 protected:
     struct Dimensions {
@@ -30,7 +30,6 @@ protected:
     // Common resources
     String file_name;
     Ref<ImageTexture> texture;
-    VideoFramePool frame_pool;
     FrameQueue frame_queue;
 
     // Utility functions
@@ -73,7 +72,7 @@ protected:
   static void _bind_methods(){};
     
 public:
-    VideoStreamNative() = default;
+    VideoStreamPlaybackNative() = default;
 };
 
 } // namespace godot

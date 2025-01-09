@@ -27,7 +27,7 @@ namespace godot {
  * Main video playback implementation that handles video decoding,
  * frame queueing, and presentation using AVFoundation.
  */
-class VideoStreamPlaybackAVF : public VideoStreamNative {
+class VideoStreamPlaybackAVF : public VideoStreamPlaybackNative {
   GDCLASS(VideoStreamPlaybackAVF, VideoStreamPlayback);
 
 private:
@@ -79,7 +79,6 @@ public:
 
   // Core video functionality
   void set_file(const String &p_file);
-  void video_write();
 
   // VideoStreamPlayback interface
   virtual void _play() override;

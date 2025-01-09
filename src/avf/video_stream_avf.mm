@@ -45,7 +45,6 @@ void VideoStreamPlaybackAVF::clear_avf_objects() {
 
     player_item = nullptr;
     state.playing = false;
-    frame_pool.reset();
 }
 
 bool VideoStreamPlaybackAVF::setup_video_pipeline(const String &p_file) {
@@ -216,64 +215,6 @@ bool VideoStreamPlaybackAVF::setup_video_pipeline(const String &p_file) {
 // -----------------------------------------------------------------------------
 // Video Processing
 // -----------------------------------------------------------------------------
-void VideoStreamPlaybackAVF::video_write() {
-  if (!video_output || !player_item || !texture.is_valid()) {
-    return;
-  }
-
-  AVPlayerItemVideoOutput *output = (AVPlayerItemVideoOutput *)video_output;
-  CMTime player_time = [(AVPlayer *)player currentTime];
-
-  // Early exit if no new frame is available
-  if (![output hasNewPixelBufferForItemTime:player_time]) {
-    return;
-  }
-
-  // Get the pixel buffer
-  CVPixelBufferRef pixel_buffer = [output copyPixelBufferForItemTime:player_time
-                                                  itemTimeForDisplay:nil];
-  if (!pixel_buffer) {
-    return;
-  }
-
-  // RAII-style buffer management
-  struct ScopedPixelBuffer {
-    CVPixelBufferRef buffer;
-    ScopedPixelBuffer(CVPixelBufferRef b) : buffer(b) {
-      CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
-    }
-    ~ScopedPixelBuffer() {
-      CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
-      CVBufferRelease(buffer);
-    }
-  } scoped_buffer(pixel_buffer);
-
-  // Get buffer info
-  const uint8_t *src_data =
-      (const uint8_t *)CVPixelBufferGetBaseAddress(pixel_buffer);
-  size_t src_stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
-  size_t width = CVPixelBufferGetWidth(pixel_buffer);
-  size_t height = CVPixelBufferGetHeight(pixel_buffer);
-
-  // Update frame data if needed
-  ensure_frame_buffer(width, height);
-
-  // Fast path: if strides match, we can do a single conversion
-  uint8_t *dst_data = frame_data.ptrw();
-  size_t dst_stride = width * 4;
-
-  if (src_stride == dst_stride) {
-    convert_bgra_to_rgba_simd(src_data, dst_data, width * height);
-  } else {
-    for (size_t y = 0; y < height; y++) {
-      convert_bgra_to_rgba_simd(src_data + y * src_stride, dst_data + y * dst_stride,
-                           width);
-    }
-  }
-
-  update_texture(width, height);
-}
-
 /**
  * Converts BGRA pixel data to RGBA using SIMD operations when available.
  * Falls back to scalar operations when SIMD is not supported.
@@ -338,16 +279,21 @@ void VideoStreamPlaybackAVF::process_pending_frames() {
     if (!video_output || !player_item) return;
     
     AVPlayerItemVideoOutput* output = (AVPlayerItemVideoOutput*)video_output;
-    CMTime player_time = [(AVPlayer*)player currentTime];
-    double current_time = CMTimeGetSeconds(player_time);
+    double current_time = state.engine_time;
     
     while (frame_queue.size() < FrameQueue::MAX_SIZE) {
         double next_time = predict_next_frame_time(current_time, state.fps);
         CMTime next_frame_time = CMTimeMakeWithSeconds(next_time, NSEC_PER_SEC);
         
+        // Check if we have a new frame available
+        if (![output hasNewPixelBufferForItemTime:next_frame_time]) {
+            break;
+        }
+        
         CVPixelBufferRef pixel_buffer = [output copyPixelBufferForItemTime:next_frame_time itemTimeForDisplay:nil];
         if (!pixel_buffer) break;
         
+        // RAII-style buffer management
         struct ScopedPixelBuffer {
             CVPixelBufferRef buffer;
             ScopedPixelBuffer(CVPixelBufferRef b) : buffer(b) {
@@ -385,7 +331,6 @@ void VideoStreamPlaybackAVF::process_pending_frames() {
         }
         
         frame_queue.push(std::move(frame));
-        
         current_time = next_time;
     }
 }
@@ -496,22 +441,27 @@ void VideoStreamPlaybackAVF::_update(double p_delta) {
     }
 
     state.engine_time += p_delta;
-    process_pending_frames();
     
-    double current_time = CMTimeGetSeconds([(AVPlayer*)player currentTime]);
-    const std::optional<VideoFrame> frame = frame_queue.try_pop_next_frame(current_time);
-
+    // Check if we should decode more frames
+    if (frame_queue.should_decode(state.engine_time, state.fps)) {
+        process_pending_frames();
+    }
+    
+    // Try to get the next frame that should be displayed
+    const std::optional<VideoFrame> frame = frame_queue.try_pop_next_frame(state.engine_time);
+    
     if (frame) {
         update_texture_from_frame(*frame);
     }
 
-    // Use media time for playback position checking
+    // Check for end of playback
     double media_time = get_media_time();
     double duration = _get_length();
     
     if (media_time >= duration) {
         state.playing = false;
         state.engine_time = 0.0;
+        frame_queue.clear();
         return;
     }
 }
