@@ -1,16 +1,10 @@
 #pragma once
 #include "../common/video_stream_native.hpp"
-#include <godot_cpp/classes/image_texture.hpp>
 #include <godot_cpp/classes/resource_format_loader.hpp>
 #include <godot_cpp/classes/video_stream.hpp>
-#include <godot_cpp/classes/video_stream_playback.hpp>
-#include <deque>
-#include <simd/simd.h>
-#include <memory_resource>
-#include <mutex>
-#include <optional>
+#include <vector>
 
-// Forward declare Objective-C classes to avoid including headers in hpp
+// Forward declarations to avoid including AVFoundation headers in the public API
 #ifdef __OBJC__
 @class AVPlayer;
 @class AVPlayerItem;
@@ -23,106 +17,88 @@ typedef struct objc_object AVPlayerItemVideoOutput;
 
 namespace godot {
 
-/**
- * Main video playback implementation that handles video decoding,
- * frame queueing, and presentation using AVFoundation.
- */
-class VideoStreamPlaybackAVF : public VideoStreamPlaybackNative {
-  GDCLASS(VideoStreamPlaybackAVF, VideoStreamPlaybackNative);
+class VideoStreamPlaybackAVF final : public VideoStreamPlaybackNative {
+    GDCLASS(VideoStreamPlaybackAVF, VideoStreamPlaybackNative)
+
+public:
+    VideoStreamPlaybackAVF();
+    ~VideoStreamPlaybackAVF();
+
+    // Core interface
+    void set_file(const String& file);
+
+    // VideoStreamPlayback interface
+    virtual void _play() override;
+    virtual void _stop() override;
+    virtual void _set_paused(bool paused) override;
+    virtual void _seek(double time) override;
+    virtual bool _is_playing() const override;
+    virtual bool _is_paused() const override;
+    virtual double _get_length() const override;
+    virtual double _get_playback_position() const override;
+    virtual void _set_audio_track(int idx) override;
+    virtual Ref<Texture2D> _get_texture() const override;
+    virtual int _get_channels() const override;
+    virtual int _get_mix_rate() const override;
+
+protected:
+    static void _bind_methods();
+
+    // VideoStreamPlaybackNative interface
+    virtual void process_frame_queue() override;
+    virtual bool check_end_of_stream() override;
+    virtual void update_frame_queue(double delta) override;
 
 private:
-  // Basic state
-  Vector<uint8_t> frame_data;     // Current frame buffer
+    struct AudioTrack {
+        int index;
+        String language;
+        String name;
+    };
 
-  AVPlayer* player{nullptr};
-  AVPlayerItem* player_item{nullptr};
-  AVPlayerItemVideoOutput* video_output{nullptr};
+    // AVFoundation resources
+    AVPlayer* player{nullptr};
+    AVPlayerItem* player_item{nullptr};
+    AVPlayerItemVideoOutput* video_output{nullptr};
+    std::vector<AudioTrack> audio_tracks;
+    Vector<uint8_t> frame_buffer;
+    
+    bool initialization_complete{false};
+    bool play_requested{false};
+    int audio_track{0};
 
-  // Audio track info
-  struct AudioTrack {
-      int index;
-      String language;
-      String name;
-  };
-  std::vector<AudioTrack> audio_tracks;
-
-  // Private helper functions
-  void clear_avf_objects();
-  bool setup_video_pipeline(const String &p_file);
-  void ensure_frame_buffer(size_t width, size_t height);
-  void update_texture(size_t width, size_t height);
-  void process_pending_frames();
-  bool should_decode_next_frame() const;
-  void detect_framerate();
-  void setup_aligned_dimensions();
-
-  // Static helpers
-  static void convert_bgra_to_rgba_simd(const uint8_t* src, uint8_t* dst, size_t pixel_count);
-
-  // Helper to get media time from player
-  double get_media_time() const;
-
-  bool initialization_complete{false}; // Flag to indicate initialization completion
-  bool play_requested{false}; // Flag to indicate if play was requested before initialization
-  int audio_track = 0; // Store the selected audio track index
-
-protected:
-  static void _bind_methods();
-
-  // New override methods
-  virtual void process_frame_queue() override;
-  virtual bool check_end_of_stream() override;
-  virtual void update_frame_queue(double p_delta) override;
-
-public:
-  VideoStreamPlaybackAVF();
-  ~VideoStreamPlaybackAVF();
-
-  // Core video functionality
-  void set_file(const String &p_file);
-
-  // VideoStreamPlayback interface
-  virtual void _play() override;
-  virtual void _stop() override;
-  virtual bool _is_playing() const override;
-  virtual void _set_paused(bool p_paused) override;
-  virtual bool _is_paused() const override;
-  virtual double _get_length() const override;
-  virtual double _get_playback_position() const override;
-  virtual void _seek(double p_time) override;
-  virtual void _set_audio_track(int p_idx) override;
-  virtual Ref<Texture2D> _get_texture() const override;
-  virtual int _get_channels() const override;
-  virtual int _get_mix_rate() const override;
+    // Private helpers
+    bool setup_video_pipeline(const String& file);
+    void clear_avf_objects();
+    void detect_framerate();
+    void setup_aligned_dimensions();
+    double get_media_time() const;
+    void ensure_frame_buffer(size_t width, size_t height);
+    static void convert_bgra_to_rgba_simd(const uint8_t* src, uint8_t* dst, size_t pixel_count);
 };
 
-class VideoStreamAVF : public VideoStream {
-  GDCLASS(VideoStreamAVF, VideoStream);
+class VideoStreamAVF final : public VideoStream {
+    GDCLASS(VideoStreamAVF, VideoStream)
 
 protected:
-  static void _bind_methods();
+    static void _bind_methods();
 
 public:
-  virtual Ref<VideoStreamPlayback> _instantiate_playback() override {
-    Ref<VideoStreamPlaybackAVF> playback;
-    playback.instantiate();
-    playback->set_file(get_file());
-    return playback;
-  }
+    virtual Ref<VideoStreamPlayback> _instantiate_playback() override;
 };
 
 class ResourceFormatLoaderAVF : public ResourceFormatLoader {
-  GDCLASS(ResourceFormatLoaderAVF, ResourceFormatLoader);
+    GDCLASS(ResourceFormatLoaderAVF, ResourceFormatLoader)
 
 protected:
-  static void _bind_methods(){};
+    static void _bind_methods() {}
 
 public:
-  Variant _load(const String &p_path, const String &p_original_path,
-                bool p_use_sub_threads, int32_t p_cache_mode) const override;
-  PackedStringArray _get_recognized_extensions() const override;
-  bool _handles_type(const StringName &p_type) const override;
-  String _get_resource_type(const String &p_path) const override;
+    Variant _load(const String& p_path, const String& p_original_path,
+                         bool p_use_sub_threads, int32_t p_cache_mode) const override;
+    PackedStringArray _get_recognized_extensions() const override;
+    bool _handles_type(const StringName& p_type) const override;
+    String _get_resource_type(const String& p_path) const override;
 };
 
 } // namespace godot

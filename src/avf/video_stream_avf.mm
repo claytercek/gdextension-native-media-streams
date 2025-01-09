@@ -16,6 +16,13 @@ void VideoStreamAVF::_bind_methods() {
   // No additional bindings needed for the stream class
 }
 
+Ref<VideoStreamPlayback> VideoStreamAVF::_instantiate_playback() {
+    Ref<VideoStreamPlaybackAVF> playback;
+    playback.instantiate();
+    playback->set_file(get_file());
+    return playback;
+}
+
 // -----------------------------------------------------------------------------
 // VideoStreamPlaybackAVF Implementation
 // -----------------------------------------------------------------------------
@@ -271,70 +278,6 @@ double VideoStreamPlaybackAVF::get_media_time() const {
     return CMTIME_IS_INVALID(current) ? 0.0 : CMTimeGetSeconds(current);
 }
 
-/**
- * Processes pending video frames, decoding them from the video buffer
- * and queuing them for presentation. Handles frame timing and synchronization.
- */
-void VideoStreamPlaybackAVF::process_pending_frames() {
-    if (!video_output || !player_item) return;
-    
-    AVPlayerItemVideoOutput* output = (AVPlayerItemVideoOutput*)video_output;
-    double current_time = state.engine_time;
-    
-    while (frame_queue.size() < FrameQueue::MAX_SIZE) {
-        double next_time = predict_next_frame_time(current_time, state.fps);
-        CMTime next_frame_time = CMTimeMakeWithSeconds(next_time, NSEC_PER_SEC);
-        
-        // Check if we have a new frame available
-        if (![output hasNewPixelBufferForItemTime:next_frame_time]) {
-            break;
-        }
-        
-        CVPixelBufferRef pixel_buffer = [output copyPixelBufferForItemTime:next_frame_time itemTimeForDisplay:nil];
-        if (!pixel_buffer) break;
-        
-        // RAII-style buffer management
-        struct ScopedPixelBuffer {
-            CVPixelBufferRef buffer;
-            ScopedPixelBuffer(CVPixelBufferRef b) : buffer(b) {
-                CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
-            }
-            ~ScopedPixelBuffer() {
-                CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
-                CVBufferRelease(buffer);
-            }
-        } scoped_buffer(pixel_buffer);
-        
-        size_t width = CVPixelBufferGetWidth(pixel_buffer);
-        size_t height = CVPixelBufferGetHeight(pixel_buffer);
-        
-        VideoFrame frame;
-        frame.size = Size2i(width, height);
-        frame.data.resize(width * height * 4);
-        frame.presentation_time = next_time;
-        
-        const uint8_t* src_data = (const uint8_t*)CVPixelBufferGetBaseAddress(pixel_buffer);
-        size_t src_stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
-        uint8_t* dst_data = frame.data.data();
-        size_t dst_stride = width * 4;
-        
-        if (src_stride == dst_stride) {
-            convert_bgra_to_rgba_simd(src_data, dst_data, width * height);
-        } else {
-            for (size_t y = 0; y < height; y++) {
-                convert_bgra_to_rgba_simd(
-                    src_data + y * src_stride,
-                    dst_data + y * dst_stride,
-                    width
-                );
-            }
-        }
-        
-        frame_queue.push(std::move(frame));
-        current_time = next_time;
-    }
-}
-
 void VideoStreamPlaybackAVF::process_frame_queue() {
     if (!video_output || !player_item) return;
     
@@ -393,15 +336,6 @@ void VideoStreamPlaybackAVF::process_frame_queue() {
         frame_queue.push(std::move(frame));
         current_time = next_time;
     }
-}
-
-bool VideoStreamPlaybackAVF::should_decode_next_frame() const {
-    if (frame_queue.empty()) return true;
-    
-    double current_time = CMTimeGetSeconds([(AVPlayer*)player currentTime]);
-    double next_frame_time = predict_next_frame_time(current_time, state.fps);
-    
-    return (next_frame_time - current_time) < 0.5;
 }
 
 bool VideoStreamPlaybackAVF::check_end_of_stream() {
@@ -512,21 +446,8 @@ void VideoStreamPlaybackAVF::_seek(double p_time) {
 // -----------------------------------------------------------------------------
 void VideoStreamPlaybackAVF::ensure_frame_buffer(size_t width, size_t height) {
   size_t required_size = width * height * 4;
-  if (frame_data.size() != required_size) {
-    frame_data.resize(required_size);
-  }
-}
-
-void VideoStreamPlaybackAVF::update_texture(size_t width, size_t height) {
-  PackedByteArray pba;
-  pba.resize(frame_data.size());
-  memcpy(pba.ptrw(), frame_data.ptr(), frame_data.size());
-
-  Ref<Image> img =
-      Image::create_from_data(width, height, false, Image::FORMAT_RGBA8, pba);
-
-  if (img.is_valid()) {
-    texture->update(img);
+  if (frame_buffer.size() != required_size) {
+    frame_buffer.resize(required_size);
   }
 }
 
