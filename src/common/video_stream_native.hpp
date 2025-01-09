@@ -68,11 +68,37 @@ protected:
         return current_time + (1.0 / fps);
     }
 
+    // virtual methods for platform implementations
+    virtual void process_frame_queue() = 0;
+    virtual bool check_end_of_stream() = 0;
+    virtual void update_frame_queue(double p_delta) = 0;
 
   static void _bind_methods(){};
     
 public:
     VideoStreamPlaybackNative() = default;
+
+    virtual void _update(double p_delta) override final {
+        if (!state.playing || state.paused) {
+            return;
+        }
+
+        state.engine_time += p_delta;
+        update_frame_queue(p_delta);
+        
+        // Try to get the next frame that should be displayed
+        const std::optional<VideoFrame> frame = frame_queue.try_pop_next_frame(state.engine_time);
+        if (frame) {
+            update_texture_from_frame(*frame);
+        }
+
+        // Check for end of playback
+        if (check_end_of_stream()) {
+            state.playing = false;
+            state.engine_time = 0.0;
+            frame_queue.clear();
+        }
+    }
 };
 
 } // namespace godot

@@ -335,6 +335,66 @@ void VideoStreamPlaybackAVF::process_pending_frames() {
     }
 }
 
+void VideoStreamPlaybackAVF::process_frame_queue() {
+    if (!video_output || !player_item) return;
+    
+    AVPlayerItemVideoOutput* output = (AVPlayerItemVideoOutput*)video_output;
+    double current_time = state.engine_time;
+    
+    while (frame_queue.size() < FrameQueue::MAX_SIZE) {
+        double next_time = predict_next_frame_time(current_time, state.fps);
+        CMTime next_frame_time = CMTimeMakeWithSeconds(next_time, NSEC_PER_SEC);
+        
+        // Check if we have a new frame available
+        if (![output hasNewPixelBufferForItemTime:next_frame_time]) {
+            break;
+        }
+        
+        CVPixelBufferRef pixel_buffer = [output copyPixelBufferForItemTime:next_frame_time itemTimeForDisplay:nil];
+        if (!pixel_buffer) break;
+        
+        // RAII-style buffer management
+        struct ScopedPixelBuffer {
+            CVPixelBufferRef buffer;
+            ScopedPixelBuffer(CVPixelBufferRef b) : buffer(b) {
+                CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+            }
+            ~ScopedPixelBuffer() {
+                CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+                CVBufferRelease(buffer);
+            }
+        } scoped_buffer(pixel_buffer);
+        
+        size_t width = CVPixelBufferGetWidth(pixel_buffer);
+        size_t height = CVPixelBufferGetHeight(pixel_buffer);
+        
+        VideoFrame frame;
+        frame.size = Size2i(width, height);
+        frame.data.resize(width * height * 4);
+        frame.presentation_time = next_time;
+        
+        const uint8_t* src_data = (const uint8_t*)CVPixelBufferGetBaseAddress(pixel_buffer);
+        size_t src_stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
+        uint8_t* dst_data = frame.data.data();
+        size_t dst_stride = width * 4;
+        
+        if (src_stride == dst_stride) {
+            convert_bgra_to_rgba_simd(src_data, dst_data, width * height);
+        } else {
+            for (size_t y = 0; y < height; y++) {
+                convert_bgra_to_rgba_simd(
+                    src_data + y * src_stride,
+                    dst_data + y * dst_stride,
+                    width
+                );
+            }
+        }
+        
+        frame_queue.push(std::move(frame));
+        current_time = next_time;
+    }
+}
+
 bool VideoStreamPlaybackAVF::should_decode_next_frame() const {
     if (frame_queue.empty()) return true;
     
@@ -342,6 +402,18 @@ bool VideoStreamPlaybackAVF::should_decode_next_frame() const {
     double next_frame_time = predict_next_frame_time(current_time, state.fps);
     
     return (next_frame_time - current_time) < 0.5;
+}
+
+bool VideoStreamPlaybackAVF::check_end_of_stream() {
+    double media_time = get_media_time();
+    double duration = _get_length();
+    return media_time >= duration;
+}
+
+void VideoStreamPlaybackAVF::update_frame_queue(double p_delta) {
+    if (frame_queue.should_decode(state.engine_time, state.fps)) {
+        process_frame_queue();
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -433,37 +505,6 @@ void VideoStreamPlaybackAVF::_seek(double p_time) {
   [(AVPlayer *)player seekToTime:time_value
                  toleranceBefore:kCMTimeZero
                   toleranceAfter:kCMTimeZero];
-}
-
-void VideoStreamPlaybackAVF::_update(double p_delta) {
-    if (!state.playing || state.paused || !player) {
-        return;
-    }
-
-    state.engine_time += p_delta;
-    
-    // Check if we should decode more frames
-    if (frame_queue.should_decode(state.engine_time, state.fps)) {
-        process_pending_frames();
-    }
-    
-    // Try to get the next frame that should be displayed
-    const std::optional<VideoFrame> frame = frame_queue.try_pop_next_frame(state.engine_time);
-    
-    if (frame) {
-        update_texture_from_frame(*frame);
-    }
-
-    // Check for end of playback
-    double media_time = get_media_time();
-    double duration = _get_length();
-    
-    if (media_time >= duration) {
-        state.playing = false;
-        state.engine_time = 0.0;
-        frame_queue.clear();
-        return;
-    }
 }
 
 // -----------------------------------------------------------------------------

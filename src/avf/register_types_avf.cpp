@@ -1,4 +1,5 @@
 #include "register_types_avf.h"
+#include "../common/video_stream_native.hpp"
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/ref.hpp>
 
@@ -18,6 +19,7 @@ void initialize_native_video_extension_avf(ModuleInitializationLevel p_level) {
   resource_loader_avf.instantiate();
   ResourceLoader::get_singleton()->add_resource_format_loader(
       resource_loader_avf, true);
+  GDREGISTER_ABSTRACT_CLASS(VideoStreamPlaybackNative);
   GDREGISTER_CLASS(VideoStreamAVF);
   GDREGISTER_CLASS(VideoStreamPlaybackAVF);
 }

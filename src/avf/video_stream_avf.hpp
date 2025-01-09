@@ -28,13 +28,9 @@ namespace godot {
  * frame queueing, and presentation using AVFoundation.
  */
 class VideoStreamPlaybackAVF : public VideoStreamPlaybackNative {
-  GDCLASS(VideoStreamPlaybackAVF, VideoStreamPlayback);
+  GDCLASS(VideoStreamPlaybackAVF, VideoStreamPlaybackNative);
 
 private:
-  
-  // Core resources
-  std::mutex mutex_;              // Thread synchronization
-  
   // Basic state
   Vector<uint8_t> frame_data;     // Current frame buffer
 
@@ -73,6 +69,11 @@ private:
 protected:
   static void _bind_methods();
 
+  // New override methods
+  virtual void process_frame_queue() override;
+  virtual bool check_end_of_stream() override;
+  virtual void update_frame_queue(double p_delta) override;
+
 public:
   VideoStreamPlaybackAVF();
   ~VideoStreamPlaybackAVF();
@@ -91,7 +92,6 @@ public:
   virtual void _seek(double p_time) override;
   virtual void _set_audio_track(int p_idx) override;
   virtual Ref<Texture2D> _get_texture() const override;
-  virtual void _update(double p_delta) override;
   virtual int _get_channels() const override;
   virtual int _get_mix_rate() const override;
 };
