@@ -6,8 +6,8 @@
 
 namespace godot {
 
-class VideoStreamPlaybackNative : public VideoStreamPlayback {
-    GDCLASS(VideoStreamPlaybackNative, VideoStreamPlayback)
+class FrameQueueVideoStream : public VideoStreamPlayback {
+    GDCLASS(FrameQueueVideoStream, VideoStreamPlayback)
 
 protected:
     struct Dimensions {
@@ -44,8 +44,8 @@ protected:
     static void _bind_methods() {}
 
 public:
-    VideoStreamPlaybackNative() = default;
-    virtual ~VideoStreamPlaybackNative() = default;
+    FrameQueueVideoStream() = default;
+    virtual ~FrameQueueVideoStream() = default;
 
     // Common implementation of update that delegates to platform-specific code
     virtual void _update(double delta) override;

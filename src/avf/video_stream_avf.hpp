@@ -1,5 +1,5 @@
 #pragma once
-#include "../common/video_stream_native.hpp"
+#include "../common/frame_queue_video_stream.hpp"
 #include <godot_cpp/classes/resource_format_loader.hpp>
 #include <godot_cpp/classes/video_stream.hpp>
 #include <vector>
@@ -17,8 +17,8 @@ typedef struct objc_object AVPlayerItemVideoOutput;
 
 namespace godot {
 
-class VideoStreamPlaybackAVF final : public VideoStreamPlaybackNative {
-    GDCLASS(VideoStreamPlaybackAVF, VideoStreamPlaybackNative)
+class VideoStreamPlaybackAVF final : public FrameQueueVideoStream {
+    GDCLASS(VideoStreamPlaybackAVF, FrameQueueVideoStream)
 
 public:
     VideoStreamPlaybackAVF();
@@ -44,7 +44,7 @@ public:
 protected:
     static void _bind_methods();
 
-    // VideoStreamPlaybackNative interface
+    // FrameQueueVideoStream interface
     virtual void process_frame_queue() override;
     virtual bool check_end_of_stream() override;
     virtual void update_frame_queue(double delta) override;

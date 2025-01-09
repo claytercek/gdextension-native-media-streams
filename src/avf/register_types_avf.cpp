@@ -1,12 +1,11 @@
 #include "register_types_avf.h"
-#include "../common/video_stream_native.hpp"
+#include "video_stream_avf.hpp"
+#include "../common/frame_queue_video_stream.hpp"
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/ref.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
 
 using namespace godot;
-
-#include <godot_cpp/classes/resource_loader.hpp>
-#include "video_stream_avf.hpp"
 
 static Ref<ResourceFormatLoaderAVF> resource_loader_avf;
 
@@ -19,7 +18,7 @@ void initialize_native_video_extension_avf(ModuleInitializationLevel p_level) {
   resource_loader_avf.instantiate();
   ResourceLoader::get_singleton()->add_resource_format_loader(
       resource_loader_avf, true);
-  GDREGISTER_ABSTRACT_CLASS(VideoStreamPlaybackNative);
+  GDREGISTER_ABSTRACT_CLASS(FrameQueueVideoStream);
   GDREGISTER_CLASS(VideoStreamAVF);
   GDREGISTER_CLASS(VideoStreamPlaybackAVF);
 }

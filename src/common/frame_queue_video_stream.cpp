@@ -1,8 +1,8 @@
-#include "video_stream_native.hpp"
+#include "frame_queue_video_stream.hpp"
 
 namespace godot {
 
-void VideoStreamPlaybackNative::update_texture_from_frame(const VideoFrame& frame) {
+void FrameQueueVideoStream::update_texture_from_frame(const VideoFrame& frame) {
     PackedByteArray pba;
     pba.resize(frame.data.size());
     memcpy(pba.ptrw(), frame.data.data(), frame.data.size());
@@ -22,22 +22,22 @@ void VideoStreamPlaybackNative::update_texture_from_frame(const VideoFrame& fram
     }
 }
 
-void VideoStreamPlaybackNative::setup_dimensions(size_t width, size_t height) {
+void FrameQueueVideoStream::setup_dimensions(size_t width, size_t height) {
     dimensions.frame.x = width;
     dimensions.frame.y = height;
     dimensions.aligned_width = align_dimension(width);
     dimensions.aligned_height = align_dimension(height);
 }
 
-size_t VideoStreamPlaybackNative::align_dimension(size_t dim, size_t alignment) {
+size_t FrameQueueVideoStream::align_dimension(size_t dim, size_t alignment) {
     return (dim + alignment - 1) & ~(alignment - 1);
 }
 
-double VideoStreamPlaybackNative::predict_next_frame_time(double current_time, float fps) {
+double FrameQueueVideoStream::predict_next_frame_time(double current_time, float fps) {
     return current_time + (1.0 / fps);
 }
 
-void VideoStreamPlaybackNative::_update(double delta) {
+void FrameQueueVideoStream::_update(double delta) {
     if (!state.playing || state.paused) {
         return;
     }
