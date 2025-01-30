@@ -3,17 +3,7 @@
 #include <godot_cpp/classes/resource_format_loader.hpp>
 #include <godot_cpp/classes/video_stream.hpp>
 #include <vector>
-
-// Forward declarations to avoid including AVFoundation headers in the public API
-#ifdef __OBJC__
-@class AVPlayer;
-@class AVPlayerItem;
-@class AVPlayerItemVideoOutput;
-#else
-typedef struct objc_object AVPlayer;
-typedef struct objc_object AVPlayerItem;
-typedef struct objc_object AVPlayerItemVideoOutput;
-#endif
+#include <AVFoundation/AVFoundation.h>
 
 namespace godot {
 
