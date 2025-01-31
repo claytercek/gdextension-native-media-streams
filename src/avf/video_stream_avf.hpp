@@ -50,8 +50,22 @@ private:
     AVPlayer* player{nullptr};
     AVPlayerItem* player_item{nullptr};
     AVPlayerItemVideoOutput* video_output{nullptr};
+    AVAssetReader* audio_reader{nullptr};
+    AVAssetReaderTrackOutput* audio_output{nullptr};
     std::vector<AudioTrack> audio_tracks;
     Vector<uint8_t> frame_buffer;
+    
+    // Audio mixing
+    PackedFloat32Array mix_buffer;
+    int mix_rate{44100};
+    int channels{2};
+    double audio_frame_time{0.0};
+    double audio_read_position{0.0};
+    bool audio_needs_restart{false};
+    
+    // Audio frame queue
+    List<CMSampleBufferRef> available_audio_frames;
+    const double LENIENCE_BEFORE_SEEK = 1.0; // 1 second tolerance before forcing seek
     
     bool initialization_complete{false};
     bool play_requested{false};
@@ -65,6 +79,8 @@ private:
     double get_media_time() const;
     void ensure_frame_buffer(size_t width, size_t height);
     static void convert_bgra_to_rgba_simd(const uint8_t* src, uint8_t* dst, size_t pixel_count);
+    void process_audio_queue();
+    bool setup_audio_reader();
 };
 
 class VideoStreamAVF final : public VideoStream {
