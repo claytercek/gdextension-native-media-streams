@@ -1,50 +1,90 @@
-# gdextension
+# Native Media Streams for Godot
 
-GDExtension template that automatically builds into a self-contained addon for the Godot Asset Library.
+A high-performance GDExtension for Godot 4.3+ that provides native media playback capabilities through platform-specific media frameworks. Built with a focus on performance, memory safety, and zero-copy operations where possible.
 
-### Getting started:
-1. Clone this repository (or a new repository with this template) with submodules.
-    - `git clone --recurse-submodules https://github.com/nathanfranke/gdextension.git`
-    - `cd gdextension`
-    - Alternatively, `git submodule update --init --recursive`
-2. Build a debug binary for the current platform.
-    - `scons`
-3. Import, edit, and play `project/` using Godot Engine 4+.
-    - `godot --path project/`
+## Key Features
 
-### Repository structure:
-- `project/` - Godot project boilerplate.
-  - `addons/native-media-stream/` - Built binaries, to be distributed to other projects.
-  - `demo/` - Scenes and scripts for internal testing.
-- `src/` - Source code.
-- `godot-cpp/` - Submodule needed for GDExtension compilation.
+- **Zero-Copy Operations**: Minimizes memory overhead by using direct texture updates where supported
+- **Native Performance**:
+  - Direct hardware acceleration through platform APIs
+  - Minimal overhead by avoiding unnecessary abstraction layers
+  - Efficient memory management using platform-specific optimizations
+- **Platform-Optimized**:
+  - Uses native media frameworks instead of generic solutions
+  - Takes advantage of platform-specific optimizations and features
+  - Automatic codec and format support through system frameworks
 
-¹ Before distributing as an addon, all binaries for all platforms must be built and copied to the `bin/` directory. This is done automatically by GitHub Actions.
+## Platform Support
 
-### LSP/Editor IDE Support:
-Running `scons cdb` will generate a `compile_commands.json` file in the root directory. This can be used by language servers and IDEs to provide code completion and other features.
+### Currently Implemented
 
-Many editors (like VSCode, Zed, etc.) can use this file to provide better C++ support while editing the extension code.
+- **macOS**: AVFoundation (AVF)
 
-### Distributing your extension on the Godot Asset Library with GitHub Actions:
-1. If needed, go to Repository→Actions→Builds→Run workflow
-2. Go to Repository→Actions and download the latest artifact.
-3. Test the artifact by extracting the addon into a project.
-4. Create a new release on GitHub, uploading the artifact as an asset.
-5. On the asset, Right Click→Copy Link to get a direct file URL. Don't use the artifacts directly from GitHub Actions, as they expire.
-6. When submitting/updating on the Godot Asset Library, Change "Repository host" to `Custom` and "Download URL" to the one you copied.
+### In Development
 
-### Platform support
+- **Windows**: Windows Media Foundation (WMF)
 
-| Status | Godot Version | Tested Platform |
-| ------ | ------------- | --------------- |
-| ✅ | 4.3 | Linux x86_64 (debug) |
-| ✅ | 4.3 | Linux x86_64 (release) |
-| ✅ | 4.3 | Windows x86_64 (debug) |
-| ✅ | 4.3 | Windows x86_64 (release) |
-| ✅ | 4.3 | Android arm64v8 (debug) |
-| ✅ | 4.3 | Android arm64v8 (release) |
-| ❌ | | MacOS (debug) |
-| ❌ | | MacOS (release) |
-| ❌ | | iOS (debug) |
-| ❌ | | iOS (release) |
+### Planned
+
+- **iOS**: AVFoundation
+- **Linux**: GStreamer
+- **Android**: MediaCodec
+
+## Why Use Native Media Streams?
+
+### Performance-First Design
+
+- Zero-copy texture updates where supported
+- Direct hardware decoder access
+- Minimal abstraction overhead
+- Platform-optimized memory management
+
+### Platform Integration
+
+- Native DRM support
+- System-level codec updates
+- Platform-specific optimizations
+- Direct access to hardware features
+
+### Maintenance Benefits
+
+- No external codec dependencies
+- Automatic security updates via system frameworks
+- Smaller binary footprint
+- Platform-maintained codec support
+
+## Building from Source
+
+### Prerequisites
+
+- SCons build system
+- Platform-specific requirements:
+  - macOS: Xcode Command Line Tools
+  - (Future) Windows: Visual Studio with Windows SDK
+  - (Future) Linux: GCC and VA-API development libraries
+
+### Build Steps
+
+```bash
+# Clone with submodules
+git clone --recurse-submodules https://github.com/claytercek/gdextension-native-media-streams.git
+
+# Build for your platform
+scons platform=<platform> target=template_debug
+# or
+scons platform=<platform> target=template_release
+```
+
+## Contributing
+
+We welcome contributions, particularly in these areas:
+
+- Additional platform implementations
+- Performance optimizations
+- Memory usage improvements
+- Platform-specific feature support
+- Documentation and examples
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
