@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://c7u64tpv6byvb"]
 
-[ext_resource type="VideoStream" path="res://videos/sync.mp4" id="1_pk6j7"]
+[ext_resource type="VideoStream" uid="uid://ck3xti1axd6hr" path="res://videos/sync.mp4" id="1_pk6j7"]
 
 [node name="Test" type="Node"]
 

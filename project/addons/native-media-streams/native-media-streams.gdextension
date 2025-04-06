@@ -7,3 +7,5 @@ compatibility_minimum = 4.3
 
 macos.debug = "bin/libnative-media-streams.macos.debug.framework"
 macos.release = "bin/libnative-media-streams.macos.release.framework"
+windows.debug.x86_64 = "bin/libnative-media-streams.windows.debug.x86_64.dll"
+windows.release.x86_64 = "bin/libnative-media-streams.windows.release.x86_64.dll"
