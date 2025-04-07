@@ -1,5 +1,6 @@
 #include "register_types_wmf.h"
 #include "video_stream_wmf.hpp"
+#include "resource_loader_wmf.hpp"
 #include "../common/frame_queue_video_stream.hpp"
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/ref.hpp>

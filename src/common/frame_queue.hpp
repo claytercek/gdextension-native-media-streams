@@ -56,6 +56,18 @@ public:
         return std::nullopt;
     }
     
+    /**
+     * Peek at the next frame from the queue without removing it.
+     * Returns nullptr if no frames are available.
+     */
+    const std::optional<VideoFrame> peek_next_frame() const {
+        const std::lock_guard<std::mutex> lock(mutex);
+        
+        if (frames.empty()) return std::nullopt;
+        
+        return frames.front();
+    }
+    
     void clear() {
         const std::lock_guard<std::mutex> lock(mutex);
         frames.clear();
