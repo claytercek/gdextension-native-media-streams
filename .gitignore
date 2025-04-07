@@ -21,3 +21,5 @@ compile_commands.json
 # AI Agents
 .windsurfrules
 .cursorrules
+
+build

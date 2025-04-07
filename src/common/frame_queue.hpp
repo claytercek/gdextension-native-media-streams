@@ -2,6 +2,7 @@
 #include "video_frame.hpp"
 #include <deque>
 #include <mutex>
+#include <optional>
 
 namespace godot {
 
