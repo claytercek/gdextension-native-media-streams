@@ -760,9 +760,6 @@ bool WMFPlayer::extract_video_data(IMFSample* sample, VideoFrame& frame) {
         if (SUCCEEDED(hr)) {
             frame.presentation_time = MediaTime::wmf_time_to_seconds(sample_time);
             last_video_position = frame.presentation_time;
-
-            UtilityFunctions::print_verbose("Video frame timestamp: " + 
-                String::num_real(frame.presentation_time) + " seconds");
         }
         
         // Set frame dimensions
