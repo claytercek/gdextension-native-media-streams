@@ -1,0 +1,75 @@
+#include "register_types_wmf.h"
+#include "wmf_video_stream_playback.hpp"
+#include <godot_cpp/classes/resource_loader.hpp>
+
+namespace godot {
+
+// Resource loader for WMF video streams
+class ResourceFormatLoaderWMF : public ResourceFormatLoader {
+    GDCLASS(ResourceFormatLoaderWMF, ResourceFormatLoader)
+
+protected:
+    static void _bind_methods() {}
+
+public:
+    Variant _load(const String &p_path, const String &p_original_path,
+                      bool p_use_sub_threads, int32_t p_cache_mode) const override {
+        Ref<VideoStreamWMF> stream;
+        stream.instantiate();
+        stream->set_file(p_path);
+        return stream;
+    }
+
+    PackedStringArray _get_recognized_extensions() const override {
+        PackedStringArray extensions;
+        extensions.push_back("mp4");
+        extensions.push_back("m4v");
+        extensions.push_back("mov");
+        extensions.push_back("wmv");
+        return extensions;
+    }
+
+    bool _handles_type(const StringName &p_type) const override {
+        return p_type == "VideoStream";
+    }
+
+    String _get_resource_type(const String &p_path) const override {
+        String extension = p_path.get_extension().to_lower();
+        if (extension == "mp4" || extension == "m4v" || extension == "mov" || extension == "wmv") {
+            return "VideoStream";
+        }
+        return "";
+    }
+};
+
+static ResourceFormatLoaderWMF *wmf_resource_loader = nullptr;
+
+// Module initialization
+void initialize_native_media_streams_wmf(ModuleInitializationLevel p_level) {
+    if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+        return;
+    }
+
+    // Register classes
+    ClassDB::register_class<VideoStreamWMF>();
+    ClassDB::register_class<VideoStreamPlaybackWMF>();
+
+    // Register resource loader
+    wmf_resource_loader = memnew(ResourceFormatLoaderWMF);
+    ResourceLoader::get_singleton()->add_resource_format_loader(wmf_resource_loader);
+}
+
+// Module cleanup
+void uninitialize_native_media_streams_wmf(ModuleInitializationLevel p_level) {
+    if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+        return;
+    }
+
+    // Cleanup resource loader
+    if (wmf_resource_loader) {
+        ResourceLoader::get_singleton()->remove_resource_format_loader(wmf_resource_loader);
+        memdelete(wmf_resource_loader);
+    }
+}
+
+} // namespace godot
