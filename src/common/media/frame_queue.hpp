@@ -103,7 +103,7 @@ public:
         
         // Calculate buffer ahead time based on playback rate
         // (higher playback rates need more buffering)
-        double buffer_time = 0.5 * playback_rate;
+        double buffer_time = 0.5 * playback_rate; // TODO: 0.5 here should be configurable
         
         // Buffer more if we don't have enough ahead
         return (latest_time - current_time) < buffer_time;

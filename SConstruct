@@ -14,12 +14,15 @@ Alias('cdb', cdb)
 
 # Add source files
 env.Append(CPPPATH=["src/"])
-sources = Glob("src/common/*.cpp") + ["src/register_types.cpp"]
+sources = ["src/register_types.cpp"]
+
+# Add common source files
+sources.extend(Glob("src/common/**/*.cpp"))
 
 # Platform-specific configurations
 if env["platform"] == "macos":
     # Add AVFoundation source files (note the .mm extension)
-    sources.extend(Glob("src/avf/*.mm") + Glob("src/avf/*.cpp"))
+    sources.extend(Glob("src/platform/avf/*.mm") + Glob("src/platform/avf/*.cpp"))
 
     # Add necessary frameworks
     env.Append(FRAMEWORKS=["AVFoundation", "CoreMedia", "CoreVideo"])
@@ -28,15 +31,15 @@ if env["platform"] == "macos":
     env.Append(CXXFLAGS=["-ObjC++"])
 elif env["platform"] == "windows":
     # Add Windows Media Foundation source files
-    sources.extend(Glob("src/wmf/*.cpp"))
+    sources.extend(Glob("src/platform/wmf/*.cpp"))
     
     # Add necessary libraries for Windows Media Foundation
-    env.Append(LIBS=["mfplat", "mf", "mfreadwrite", "mfuuid", "d3d11", "ole32"])
+    env.Append(LIBS=["mfplat", "mf", "mfreadwrite", "mfuuid", "d3d11", "ole32", "shlwapi"])
     
     # Enable Unicode for Windows API
     env.Append(CPPDEFINES=["UNICODE", "_UNICODE"])
     
-    # C++17 is needed for std::optional
+    # C++17 is needed for std::optional and other modern features
     env.Append(CXXFLAGS=["/std:c++17", "/EHsc"])
 
 # Find gdextension path even if the directory or extension is renamed (e.g. project/addons/example/example.gdextension).

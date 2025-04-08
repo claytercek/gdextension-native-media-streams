@@ -1,8 +1,11 @@
 #pragma once
 #include "../../common/interfaces/media_player.hpp"
 #include "../../common/media/media_time.hpp"
+#include "../../common/media/video_frame.hpp"
+#include "../../common/media/audio_frame.hpp"
 #include <memory>
 #include <string>
+#include <vector>
 
 // Forward declare AVFoundation classes to avoid including Objective-C headers
 // in this header file
@@ -64,7 +67,7 @@ public:
     double get_position() const override;
     
     bool read_video_frame(VideoFrame& frame) override;
-    bool read_audio_frame(AudioFrame& frame, double current_time) override;
+    bool read_audio_frame(AudioFrame& frame) override;
     
     int get_audio_track_count() const override;
     TrackInfo get_audio_track_info(int track_index) const override;

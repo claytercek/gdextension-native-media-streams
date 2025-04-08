@@ -1,6 +1,7 @@
 #include "register_types_wmf.h"
 #include "wmf_video_stream_playback.hpp"
 #include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/resource_format_loader.hpp>
 
 namespace godot {
 
@@ -30,7 +31,7 @@ public:
     }
 
     bool _handles_type(const StringName &p_type) const override {
-        return p_type == "VideoStream";
+        return ClassDB::is_parent_class(p_type, "VideoStream");
     }
 
     String _get_resource_type(const String &p_path) const override {
@@ -42,7 +43,7 @@ public:
     }
 };
 
-static ResourceFormatLoaderWMF *wmf_resource_loader = nullptr;
+static Ref<ResourceFormatLoaderWMF> wmf_resource_loader;
 
 // Module initialization
 void initialize_native_media_streams_wmf(ModuleInitializationLevel p_level) {
@@ -51,11 +52,12 @@ void initialize_native_media_streams_wmf(ModuleInitializationLevel p_level) {
     }
 
     // Register classes
+    ClassDB::register_class<ResourceFormatLoaderWMF>();
     ClassDB::register_class<VideoStreamWMF>();
     ClassDB::register_class<VideoStreamPlaybackWMF>();
 
     // Register resource loader
-    wmf_resource_loader = memnew(ResourceFormatLoaderWMF);
+    wmf_resource_loader.instantiate();
     ResourceLoader::get_singleton()->add_resource_format_loader(wmf_resource_loader);
 }
 
@@ -66,10 +68,9 @@ void uninitialize_native_media_streams_wmf(ModuleInitializationLevel p_level) {
     }
 
     // Cleanup resource loader
-    if (wmf_resource_loader) {
-        ResourceLoader::get_singleton()->remove_resource_format_loader(wmf_resource_loader);
-        memdelete(wmf_resource_loader);
-    }
+    ResourceLoader::get_singleton()->remove_resource_format_loader(
+        wmf_resource_loader);
+    wmf_resource_loader.unref();
 }
 
 } // namespace godot

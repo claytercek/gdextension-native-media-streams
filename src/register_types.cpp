@@ -3,6 +3,10 @@
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
+// Include common base classes
+#include "common/playback/video_stream_base.hpp"
+#include "common/playback/video_stream_playback_base.hpp"
+
 // Include platform-specific headers
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
 #include "platform/wmf/register_types_wmf.h"
@@ -16,9 +20,25 @@ void uninitialize_native_media_streams_stub(ModuleInitializationLevel p_level) {
 }
 #endif
 
+namespace godot {
+// Register base classes that are shared across platform implementations
+void register_native_media_streams_base_classes(ModuleInitializationLevel p_level) {
+    if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+        return;
+    }
+    
+    // Register base classes
+    ClassDB::register_class<VideoStreamBase>();
+    ClassDB::register_class<VideoStreamPlaybackBase>();
+}
+}
+
 // Main module initialization
 void initialize_native_media_streams_module(ModuleInitializationLevel p_level) {
-    // Call platform-specific initialization
+    // First register base classes
+    godot::register_native_media_streams_base_classes(p_level);
+    
+    // Then call platform-specific initialization
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
     godot::initialize_native_media_streams_wmf(p_level);
 #elif defined(__APPLE__)

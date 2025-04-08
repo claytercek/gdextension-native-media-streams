@@ -1,7 +1,8 @@
 #pragma once
+#include <string>
+#include <vector>
 #include "../media/video_frame.hpp"
 #include "../media/audio_frame.hpp"
-#include <string>
 
 namespace godot {
 
@@ -62,7 +63,7 @@ public:
     
     // Frame handling
     virtual bool read_video_frame(VideoFrame& frame) = 0;
-    virtual bool read_audio_frame(AudioFrame& frame, double current_time) = 0;
+    virtual bool read_audio_frame(AudioFrame& frame) = 0;
     
     // Audio track management
     virtual int get_audio_track_count() const = 0;

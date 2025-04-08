@@ -43,39 +43,65 @@ protected:
     
     // Update the texture from a video frame
     void update_texture_from_frame(const VideoFrame& frame) {
+        // Safety checks
+        if (frame.data.empty() || frame.size.x <= 0 || frame.size.y <= 0) {
+            UtilityFunctions::printerr("Invalid video frame data or dimensions");
+            return;
+        }
+        
+        // Check that the data size matches expected dimensions
+        size_t expected_size = frame.size.x * frame.size.y * 4; // RGBA8 = 4 bytes per pixel
+        if (frame.data.size() != expected_size) {
+            UtilityFunctions::printerr("Frame data size mismatch: got " + 
+                String::num_int64(frame.data.size()) + " bytes, expected " + 
+                String::num_int64(expected_size) + " for size " + 
+                String::num_int64(frame.size.x) + "x" + String::num_int64(frame.size.y));
+            return;
+        }
+        
         // Create a packed byte array from frame data for Godot
         PackedByteArray pba;
         pba.resize(frame.data.size());
-        if (!frame.data.empty()) {
-            memcpy(pba.ptrw(), frame.data.data(), frame.data.size());
+        memcpy(pba.ptrw(), frame.data.data(), frame.data.size());
+    
+        // Create an image and update the texture
+        Ref<Image> img;
         
-            // Create an image and update the texture
-            Ref<Image> img = Image::create_from_data(
+        try {
+            img = Image::create_from_data(
                 frame.size.x, frame.size.y,
                 false, Image::FORMAT_RGBA8,
                 pba
             );
-            
-            if (img.is_valid()) {
-                if (!texture.is_valid()) {
-                    texture.instantiate();
-                }
-                
-                if (texture->get_size() == frame.size) {
-                    texture->update(img);
-                } else {
-                    texture->set_image(img);
-                }
+        } catch (const std::exception& e) {
+            UtilityFunctions::printerr("Exception creating image: " + String(e.what()));
+            return;
+        } catch (...) {
+            UtilityFunctions::printerr("Unknown exception creating image");
+            return;
+        }
+        
+        if (img.is_valid()) {
+            if (!texture.is_valid()) {
+                texture.instantiate();
             }
+            
+            try {
+                // Always set_image to ensure correct dimensions
+                texture->set_image(img);
+            } catch (const std::exception& e) {
+                UtilityFunctions::printerr("Exception setting texture image: " + String(e.what()));
+            } catch (...) {
+                UtilityFunctions::printerr("Unknown exception setting texture image");
+            }
+        } else {
+            UtilityFunctions::printerr("Failed to create valid image from video frame");
         }
     }
     
     // Process video frames - check queue and buffer more if needed
-    virtual void process_video_queue(double delta) {
+    virtual void process_video_queue() {
         if (!media_player || !state.playing || state.paused) return;
-        
-        // Update current playback time
-        state.engine_time += delta;
         
         // Check if we need to buffer more video frames
         if (video_frames.should_buffer_more_frames(state.engine_time, state.playback_rate)) {
@@ -88,9 +114,6 @@ protected:
             update_texture_from_frame(*frame);
             last_video_time = frame->presentation_time;
         }
-        
-        // Process audio frames
-        process_audio_queue();
         
         // Check for end of stream
         if (media_player->has_ended() && video_frames.empty() && audio_frames.empty()) {
@@ -147,7 +170,7 @@ protected:
         int frames_to_buffer = AudioFrameQueue::DEFAULT_MAX_SIZE - audio_frames.size();
         for (int i = 0; i < frames_to_buffer; i++) {
             AudioFrame frame;
-            if (media_player->read_audio_frame(frame, state.engine_time)) {
+            if (media_player->read_audio_frame(frame)) {
                 audio_frames.push(std::move(frame));
             } else {
                 break; // No more frames available now
@@ -264,7 +287,11 @@ public:
     }
     
     virtual void _update(double delta) override {
-        process_video_queue(delta);
+        // Update current playback time
+        state.engine_time += delta;
+
+        process_video_queue();
+        process_audio_queue();
     }
     
     virtual double _get_playback_position() const override {
@@ -278,6 +305,18 @@ public:
     }
     
     virtual Ref<Texture2D> _get_texture() const override {
+        if (!texture.is_valid()) {
+            // Create a 1x1 black texture as fallback for audio-only streams
+            Ref<Image> img = Image::create(1, 1, false, Image::FORMAT_RGBA8);
+            img->fill(Color(0, 0, 0, 1)); // Black, opaque
+            
+            Ref<ImageTexture> fallback;
+            fallback.instantiate();
+            fallback->set_image(img);
+            
+            return fallback;
+        }
+        
         return texture;
     }
     

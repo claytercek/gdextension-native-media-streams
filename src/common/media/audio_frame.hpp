@@ -34,6 +34,42 @@ struct AudioFrame {
     
     // Constructor with timestamp
     explicit AudioFrame(double time) : presentation_time(time) {}
+    
+    // Copy constructor
+    AudioFrame(const AudioFrame& other)
+        : data(other.data)
+        , presentation_time(other.presentation_time)
+        , channels(other.channels)
+        , sample_rate(other.sample_rate) {}
+    
+    // Copy assignment operator
+    AudioFrame& operator=(const AudioFrame& other) {
+        if (this != &other) {
+            data = other.data;
+            presentation_time = other.presentation_time;
+            channels = other.channels;
+            sample_rate = other.sample_rate;
+        }
+        return *this;
+    }
+    
+    // Move constructor
+    AudioFrame(AudioFrame&& other) noexcept
+        : data(std::move(other.data))
+        , presentation_time(other.presentation_time)
+        , channels(other.channels)
+        , sample_rate(other.sample_rate) {}
+    
+    // Move assignment operator
+    AudioFrame& operator=(AudioFrame&& other) noexcept {
+        if (this != &other) {
+            data = std::move(other.data);
+            presentation_time = other.presentation_time;
+            channels = other.channels;
+            sample_rate = other.sample_rate;
+        }
+        return *this;
+    }
 };
 
 } // namespace godot

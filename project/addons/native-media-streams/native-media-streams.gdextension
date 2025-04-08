@@ -1,6 +1,6 @@
 [configuration]
 
-entry_symbol = "native_video_init"
+entry_symbol = "native_media_streams_init"
 compatibility_minimum = 4.3
 
 [libraries]

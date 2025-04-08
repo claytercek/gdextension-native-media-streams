@@ -21,6 +21,22 @@ struct VideoFrame {
     // Default constructor
     VideoFrame() = default;
     
+    // Copy constructor
+    VideoFrame(const VideoFrame& other)
+        : data(other.data)
+        , presentation_time(other.presentation_time)
+        , size(other.size) {}
+    
+    // Copy assignment operator 
+    VideoFrame& operator=(const VideoFrame& other) {
+        if (this != &other) {
+            data = other.data;
+            presentation_time = other.presentation_time;
+            size = other.size;
+        }
+        return *this;
+    }
+    
     // Move constructor for efficient handling
     VideoFrame(VideoFrame&& other) noexcept
         : data(std::move(other.data))

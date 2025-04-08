@@ -61,7 +61,7 @@ public:
     double get_position() const override;
     
     bool read_video_frame(VideoFrame& frame) override;
-    bool read_audio_frame(AudioFrame& frame, double current_time) override;
+    bool read_audio_frame(AudioFrame& frame) override;
     
     int get_audio_track_count() const override;
     TrackInfo get_audio_track_info(int track_index) const override;

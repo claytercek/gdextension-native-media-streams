@@ -1,7 +1,9 @@
 #include "avf_video_stream_playback.hpp"
+#include "avf_player.hpp"
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/classes/file_access.hpp>
+#include <memory> // For std::unique_ptr, std::make_unique
 
 namespace godot {
 

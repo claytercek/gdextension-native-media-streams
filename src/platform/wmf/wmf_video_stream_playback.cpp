@@ -64,7 +64,7 @@ void VideoStreamWMF::_bind_methods() {
 Ref<VideoStreamPlayback> VideoStreamWMF::_instantiate_playback() {
     Ref<VideoStreamPlaybackWMF> playback;
     playback.instantiate();
-    playback->initialize(file_path);
+    playback->initialize(get_file());
     return playback;
 }
 
