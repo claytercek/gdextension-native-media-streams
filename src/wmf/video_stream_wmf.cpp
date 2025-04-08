@@ -28,7 +28,8 @@ void VideoStreamPlaybackWMF::_bind_methods() {
   // No additional bindings needed as we're implementing VideoStreamPlayback interface
 }
 
-VideoStreamPlaybackWMF::VideoStreamPlaybackWMF() { 
+VideoStreamPlaybackWMF::VideoStreamPlaybackWMF() 
+    : audio_handler(this) {
     texture.instantiate();
 }
 
@@ -87,11 +88,13 @@ void VideoStreamPlaybackWMF::set_file(const String &p_file) {
 void VideoStreamPlaybackWMF::_seek(double p_time) {
     // Reset state
     frame_queue.clear();
-    audio_handler.clear_audio_sample_queue();
     state.engine_time = p_time;
     last_frame_time = p_time;
     
-    // Perform seek
+    // Handle audio seek
+    audio_handler.seek(p_time);
+    
+    // Perform media seek
     if (media_source.seek_to_position(p_time)) {
         UtilityFunctions::print_verbose("Seek performed to: " + String::num_real(p_time));
     }
@@ -125,13 +128,8 @@ void VideoStreamPlaybackWMF::process_frame_queue() {
     auto source_reader = media_source.get_source_reader();
     if (!source_reader) return;
     
-    // Process video frames
+    // Process video frames only - audio is handled separately in update_frame_queue
     video_decoder.process_frames(source_reader, frame_queue);
-    
-    // Process audio samples
-    if (state.playing && !state.paused) {
-        audio_handler.process_audio_samples(source_reader, state.engine_time);
-    }
 }
 
 // -----------------------------------------------------------------------------
@@ -186,6 +184,12 @@ int VideoStreamPlaybackWMF::_get_mix_rate() const {
     return audio_handler.get_mix_rate();
 }
 
+// IAudioMixer implementation
+void VideoStreamPlaybackWMF::mix_audio(int frame_count, const PackedFloat32Array& buffer) {
+    // Delegate to the parent class (VideoStreamPlayback) mix_audio method
+    VideoStreamPlayback::mix_audio(frame_count, buffer);
+}
+
 void VideoStreamPlaybackWMF::_stop() {
     if (!media_source.get_source_reader()) return;
     
@@ -204,25 +208,18 @@ void VideoStreamPlaybackWMF::_set_paused(bool p_paused) {
     // No need to do anything with WMF, we control playback through our read loop
 }
 
-// Improved update_frame_queue with better audio handling
 void VideoStreamPlaybackWMF::update_frame_queue(double p_delta) {
     auto source_reader = media_source.get_source_reader();
     if (!source_reader) return;
-    
-    // Update our engine time properly first before any other operations
-    if (state.playing && !state.paused) {
-        state.engine_time += p_delta;
-    }
     
     // Process frames based on buffering needs
     if (frame_queue.should_decode(state.engine_time, state.fps)) {
         process_frame_queue();
     }
     
-    // Process audio synchronization - do this every frame for smoother audio
+    // Process audio - do this every frame for smoother audio
     if (state.playing && !state.paused) {
-        // Process queued audio samples for the current time
-        audio_handler.update_audio_sync(state.engine_time);
+        audio_handler.process_audio(source_reader, state.engine_time);
     }
     
     // Track the last frame time for end-of-stream detection

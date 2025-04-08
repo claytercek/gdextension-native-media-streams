@@ -9,7 +9,7 @@
 
 namespace godot {
 
-class VideoStreamPlaybackWMF final : public FrameQueueVideoStream {
+class VideoStreamPlaybackWMF final : public FrameQueueVideoStream, public IAudioMixer {
     GDCLASS(VideoStreamPlaybackWMF, FrameQueueVideoStream)
 
 public:
@@ -32,6 +32,9 @@ public:
     virtual Ref<Texture2D> _get_texture() const override;
     virtual int _get_channels() const override;
     virtual int _get_mix_rate() const override;
+    
+    // IAudioMixer interface implementation
+    virtual void mix_audio(int frame_count, const PackedFloat32Array& buffer) override;
 
 protected:
     static void _bind_methods();

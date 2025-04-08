@@ -4,16 +4,6 @@ from glob import glob
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-  # Add type hints for SCons globals
-  from SCons.Script.SConscript import SConsEnvironment
-  from SCons.Defaults import DefaultEnvironment
-  Default = SConsEnvironment(DefaultEnvironment()).Default
-  Glob = DefaultEnvironment().Glob
-  Alias = DefaultEnvironment().Alias
-  CacheDir = DefaultEnvironment().CacheDir
-  SConscript = SConsEnvironment(DefaultEnvironment()).SConscript
-
 # TODO: Do not copy environment after godot-cpp/test is updated <https://github.com/godotengine/godot-cpp/blob/master/test/SConstruct>.
 env = SConscript("godot-cpp/SConstruct")
 
@@ -47,7 +37,7 @@ elif env["platform"] == "windows":
     env.Append(CPPDEFINES=["UNICODE", "_UNICODE"])
     
     # C++17 is needed for std::optional
-    env.Append(CXXFLAGS=["/std:c++17"])
+    env.Append(CXXFLAGS=["/std:c++17", "/EHsc"])
 
 # Find gdextension path even if the directory or extension is renamed (e.g. project/addons/example/example.gdextension).
 (extension_path,) = glob("project/addons/*/*.gdextension")
