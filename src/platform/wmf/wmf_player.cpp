@@ -777,173 +777,124 @@ bool WMFPlayer::extract_video_data(IMFSample* sample, VideoFrame& frame) {
         
         // Different conversion based on video format
         if (video_format == MFVideoFormat_RGB32) {
+            uint8_t* src = data;
+            uint8_t* dst = frame.data.data();
+
             // BGRA to RGBA conversion
             for (int y = 0; y < frame.size.y; y++) {
                 for (int x = 0; x < frame.size.x; x++) {
-                    // Source offset in BGRA data
-                    size_t src_idx = (y * frame.size.x + x) * 4;
+                    dst[0] = src[2]; // R
+                    dst[1] = src[1]; // G
+                    dst[2] = src[0]; // B
+                    dst[3] = src[3]; // A
                     
-                    // Destination offset in our RGBA buffer
-                    size_t dst_idx = (y * frame.size.x + x) * 4;
-                    
-                    // Safety check
-                    if (src_idx + 3 < data_length) {
-                        // Swap R and B channels
-                        frame.data[dst_idx + 0] = data[src_idx + 2]; // R <- B
-                        frame.data[dst_idx + 1] = data[src_idx + 1]; // G <- G
-                        frame.data[dst_idx + 2] = data[src_idx + 0]; // B <- R
-                        frame.data[dst_idx + 3] = data[src_idx + 3]; // A <- A
-                    } else {
-                        // Black pixel if out of bounds
-                        frame.data[dst_idx + 0] = 0; // R
-                        frame.data[dst_idx + 1] = 0; // G
-                        frame.data[dst_idx + 2] = 0; // B
-                        frame.data[dst_idx + 3] = 255; // A
-                    }
+                    src += 4;
+                    dst += 4;
                 }
             }
         } else if (video_format == MFVideoFormat_RGB24) {
             // RGB24 (BGR) to RGBA conversion
+            const int src_stride = frame.size.x * 3;
+            
             for (int y = 0; y < frame.size.y; y++) {
+                uint8_t* src = data + y * src_stride;
+                uint8_t* dst = frame.data.data() + y * frame.size.x * 4;
+                
                 for (int x = 0; x < frame.size.x; x++) {
-                    // Source offset in BGR data
-                    size_t src_idx = (y * frame.size.x + x) * 3;
+                    // BGR to RGBA conversion (safe because we know our buffer size)
+                    dst[0] = src[2]; // R <- B
+                    dst[1] = src[1]; // G <- G
+                    dst[2] = src[0]; // B <- R
+                    dst[3] = 255;    // A (opaque)
                     
-                    // Destination offset in our RGBA buffer
-                    size_t dst_idx = (y * frame.size.x + x) * 4;
-                    
-                    // Safety check
-                    if (src_idx + 2 < data_length) {
-                        // BGR to RGBA conversion
-                        frame.data[dst_idx + 0] = data[src_idx + 2]; // R <- B
-                        frame.data[dst_idx + 1] = data[src_idx + 1]; // G <- G
-                        frame.data[dst_idx + 2] = data[src_idx + 0]; // B <- R
-                        frame.data[dst_idx + 3] = 255;              // A (opaque)
-                    } else {
-                        // Black pixel if out of bounds
-                        frame.data[dst_idx + 0] = 0; // R
-                        frame.data[dst_idx + 1] = 0; // G
-                        frame.data[dst_idx + 2] = 0; // B
-                        frame.data[dst_idx + 3] = 255; // A
-                    }
+                    src += 3;
+                    dst += 4;
                 }
             }
         } else if (video_format == MFVideoFormat_YUY2) {
             // YUY2 to RGBA conversion
             // YUY2 format packs 2 pixels into 4 bytes: [Y0, U0, Y1, V0]
-            const int stride = (frame.size.x + 1) / 2 * 4; // YUY2 stride
+            const int src_stride = (frame.size.x + 1) / 2 * 4; // YUY2 stride
             
             for (int y = 0; y < frame.size.y; y++) {
+                uint8_t* src = data + y * src_stride;
+                uint8_t* dst = frame.data.data() + y * frame.size.x * 4;
+                
                 for (int x = 0; x < frame.size.x; x += 2) {
-                    // Source offset for each YUY2 macropixel (2 pixels)
-                    size_t src_idx = y * stride + (x / 2) * 4;
-                    
                     // Process two pixels at once
-                    if (src_idx + 3 < data_length) {
-                        int y0 = data[src_idx + 0]; // Y for pixel 0
-                        int u  = data[src_idx + 1]; // U for both pixels
-                        int y1 = data[src_idx + 2]; // Y for pixel 1
-                        int v  = data[src_idx + 3]; // V for both pixels
-                        
-                        // Convert to RGB using BT.601 conversion
-                        // First pixel
-                        size_t dst_idx0 = (y * frame.size.x + x) * 4;
-                        if (x < frame.size.x) {
-                            // YUV to RGB conversion
-                            int c = y0 - 16;
-                            int d = u - 128;
-                            int e = v - 128;
-                            
-                            frame.data[dst_idx0 + 0] = std::clamp(( 298 * c + 409 * e + 128) >> 8, 0, 255); // R
-                            frame.data[dst_idx0 + 1] = std::clamp(( 298 * c - 100 * d - 208 * e + 128) >> 8, 0, 255); // G
-                            frame.data[dst_idx0 + 2] = std::clamp(( 298 * c + 516 * d + 128) >> 8, 0, 255); // B
-                            frame.data[dst_idx0 + 3] = 255; // A
-                        }
-                        
-                        // Second pixel
-                        size_t dst_idx1 = (y * frame.size.x + x + 1) * 4;
-                        if (x + 1 < frame.size.x) {
-                            // YUV to RGB conversion
-                            int c = y1 - 16;
-                            int d = u - 128;
-                            int e = v - 128;
-                            
-                            frame.data[dst_idx1 + 0] = std::clamp(( 298 * c + 409 * e + 128) >> 8, 0, 255); // R
-                            frame.data[dst_idx1 + 1] = std::clamp(( 298 * c - 100 * d - 208 * e + 128) >> 8, 0, 255); // G
-                            frame.data[dst_idx1 + 2] = std::clamp(( 298 * c + 516 * d + 128) >> 8, 0, 255); // B
-                            frame.data[dst_idx1 + 3] = 255; // A
-                        }
-                    } else {
-                        // Fill with black if out of bounds
-                        if (x < frame.size.x) {
-                            size_t dst_idx0 = (y * frame.size.x + x) * 4;
-                            frame.data[dst_idx0 + 0] = 0; // R
-                            frame.data[dst_idx0 + 1] = 0; // G
-                            frame.data[dst_idx0 + 2] = 0; // B
-                            frame.data[dst_idx0 + 3] = 255; // A
-                        }
-                        
-                        if (x + 1 < frame.size.x) {
-                            size_t dst_idx1 = (y * frame.size.x + x + 1) * 4;
-                            frame.data[dst_idx1 + 0] = 0; // R
-                            frame.data[dst_idx1 + 1] = 0; // G
-                            frame.data[dst_idx1 + 2] = 0; // B
-                            frame.data[dst_idx1 + 3] = 255; // A
-                        }
+                    int y0 = src[0]; // Y for pixel 0
+                    int u  = src[1]; // U for both pixels
+                    int y1 = src[2]; // Y for pixel 1
+                    int v  = src[3]; // V for both pixels
+                    
+                    // Convert to RGB using BT.601 conversion
+                    // First pixel
+                    int c = y0 - 16;
+                    int d = u - 128;
+                    int e = v - 128;
+                    
+                    dst[0] = std::clamp(( 298 * c + 409 * e + 128) >> 8, 0, 255); // R
+                    dst[1] = std::clamp(( 298 * c - 100 * d - 208 * e + 128) >> 8, 0, 255); // G
+                    dst[2] = std::clamp(( 298 * c + 516 * d + 128) >> 8, 0, 255); // B
+                    dst[3] = 255; // A
+                    
+                    // Second pixel (if within bounds)
+                    if (x + 1 < frame.size.x) {
+                    c = y1 - 16;
+                    
+                    dst[4] = std::clamp(( 298 * c + 409 * e + 128) >> 8, 0, 255); // R
+                    dst[5] = std::clamp(( 298 * c - 100 * d - 208 * e + 128) >> 8, 0, 255); // G
+                    dst[6] = std::clamp(( 298 * c + 516 * d + 128) >> 8, 0, 255); // B
+                    dst[7] = 255; // A
                     }
+                    
+                    src += 4;     // Advance 4 bytes (2 pixels in YUY2)
+                    dst += 8;     // Advance 8 bytes (2 pixels in RGBA)
                 }
             }
         } else if (video_format == MFVideoFormat_NV12) {
             // NV12 to RGBA conversion
             // NV12 format has Y plane followed by interleaved U/V plane
             const int y_plane_size = frame.size.x * frame.size.y;
-            const int uv_plane_offset = y_plane_size;
+            const uint8_t* y_plane = data;
+            const uint8_t* uv_plane = data + y_plane_size;
+            const int chroma_stride = frame.size.x;
             
             for (int y = 0; y < frame.size.y; y++) {
+                uint8_t* dst = frame.data.data() + y * frame.size.x * 4;
+                const uint8_t* y_line = y_plane + y * frame.size.x;
+                const uint8_t* uv_line = uv_plane + (y / 2) * chroma_stride;
+                
                 for (int x = 0; x < frame.size.x; x++) {
                     // Get Y value for this pixel
-                    int y_idx = y * frame.size.x + x;
+                    int y_val = y_line[x];
                     
                     // Get U/V values (shared by 2x2 pixel blocks)
-                    int uv_x = x / 2; 
-                    int uv_y = y / 2;
-                    int uv_idx = uv_plane_offset + uv_y * frame.size.x + uv_x * 2;
+                    int u_val = uv_line[(x/2) * 2];
+                    int v_val = uv_line[(x/2) * 2 + 1];
                     
-                    size_t dst_idx = (y * frame.size.x + x) * 4;
+                    // YUV to RGB conversion
+                    int c = y_val - 16;
+                    int d = u_val - 128;
+                    int e = v_val - 128;
                     
-                    if (y_idx < data_length && uv_idx + 1 < data_length) {
-                        // Get YUV components
-                        int y_val = data[y_idx];
-                        int u_val = data[uv_idx];
-                        int v_val = data[uv_idx + 1];
-                        
-                        // YUV to RGB conversion
-                        int c = y_val - 16;
-                        int d = u_val - 128;
-                        int e = v_val - 128;
-                        
-                        frame.data[dst_idx + 0] = std::clamp(( 298 * c + 409 * e + 128) >> 8, 0, 255); // R
-                        frame.data[dst_idx + 1] = std::clamp(( 298 * c - 100 * d - 208 * e + 128) >> 8, 0, 255); // G
-                        frame.data[dst_idx + 2] = std::clamp(( 298 * c + 516 * d + 128) >> 8, 0, 255); // B
-                        frame.data[dst_idx + 3] = 255; // A
-                    } else {
-                        // Fill with black if out of bounds
-                        frame.data[dst_idx + 0] = 0; // R
-                        frame.data[dst_idx + 1] = 0; // G
-                        frame.data[dst_idx + 2] = 0; // B
-                        frame.data[dst_idx + 3] = 255; // A
-                    }
+                    dst[0] = std::clamp(( 298 * c + 409 * e + 128) >> 8, 0, 255); // R
+                    dst[1] = std::clamp(( 298 * c - 100 * d - 208 * e + 128) >> 8, 0, 255); // G
+                    dst[2] = std::clamp(( 298 * c + 516 * d + 128) >> 8, 0, 255); // B
+                    dst[3] = 255; // A
+                    
+                    dst += 4;
                 }
             }
         } else {
             // Unknown format - just fill with a solid color to indicate an issue
-            size_t dst_idx = 0;
+            uint8_t* dst = frame.data.data();
             for (int y = 0; y < frame.size.y; y++) {
                 for (int x = 0; x < frame.size.x; x++) {
-                    frame.data[dst_idx++] = 255; // R (red)
-                    frame.data[dst_idx++] = 0;   // G
-                    frame.data[dst_idx++] = 0;   // B
-                    frame.data[dst_idx++] = 255; // A
+                    *dst++ = 255; // R (red)
+                    *dst++ = 0;   // G
+                    *dst++ = 0;   // B
+                    *dst++ = 255; // A
                 }
             }
             UtilityFunctions::printerr("Unknown video format encountered in extract_video_data");
