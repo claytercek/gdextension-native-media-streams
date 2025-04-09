@@ -90,24 +90,6 @@ public:
         const std::lock_guard<std::mutex> lock(mutex);
         frames.clear();
     }
-    
-    // Check if we should decode more frames based on current time and playback rate
-    bool should_buffer_more_frames(double current_time, float playback_rate = 1.0f) const {
-        const std::lock_guard<std::mutex> lock(mutex);
-        
-        // If empty, we definitely need more frames
-        if (frames.empty()) return true;
-        
-        // Get the timestamp of the last frame in the queue
-        double latest_time = frames.back().presentation_time;
-        
-        // Calculate buffer ahead time based on playback rate
-        // (higher playback rates need more buffering)
-        double buffer_time = 0.5 * playback_rate; // TODO: 0.5 here should be configurable
-        
-        // Buffer more if we don't have enough ahead
-        return (latest_time - current_time) < buffer_time;
-    }
 };
 
 // Type aliases for common frame queue types

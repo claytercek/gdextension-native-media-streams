@@ -102,11 +102,8 @@ protected:
     // Process video frames - check queue and buffer more if needed
     virtual void process_video_queue() {
         if (!media_player || !state.playing || state.paused) return;
-        
-        // Check if we need to buffer more video frames
-        if (video_frames.should_buffer_more_frames(state.engine_time, state.playback_rate)) {
-            buffer_video_frames();
-        }
+
+        buffer_video_frames();
         
         // Get the next frame to display at current time
         auto frame = video_frames.try_pop_frame_at_time(state.engine_time);
@@ -126,10 +123,7 @@ protected:
     virtual void process_audio_queue() {
         if (!media_player || !state.playing || state.paused) return;
         
-        // Check if we need more audio frames
-        if (audio_frames.should_buffer_more_frames(state.engine_time, state.playback_rate)) {
-            buffer_audio_frames();
-        }
+        buffer_audio_frames();
         
         // Mix audio frames that are ready for playback
         while (!audio_frames.empty()) {
@@ -152,8 +146,7 @@ protected:
     virtual void buffer_video_frames() {
         if (!media_player) return;
         
-        int frames_to_buffer = VideoFrameQueue::DEFAULT_MAX_SIZE - video_frames.size();
-        for (int i = 0; i < frames_to_buffer; i++) {
+        while (video_frames.size() < VideoFrameQueue::DEFAULT_MAX_SIZE) {
             VideoFrame frame;
             if (media_player->read_video_frame(frame)) {
                 video_frames.push(std::move(frame));
@@ -167,8 +160,7 @@ protected:
     virtual void buffer_audio_frames() {
         if (!media_player) return;
         
-        int frames_to_buffer = AudioFrameQueue::DEFAULT_MAX_SIZE - audio_frames.size();
-        for (int i = 0; i < frames_to_buffer; i++) {
+        while (audio_frames.size() < AudioFrameQueue::DEFAULT_MAX_SIZE) {
             AudioFrame frame;
             if (media_player->read_audio_frame(frame)) {
                 audio_frames.push(std::move(frame));
