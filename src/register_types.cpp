@@ -28,8 +28,8 @@ void register_native_media_streams_base_classes(ModuleInitializationLevel p_leve
     }
     
     // Register base classes
-    ClassDB::register_class<VideoStreamBase>();
-    ClassDB::register_class<VideoStreamPlaybackBase>();
+    ClassDB::register_class<VideoStreamBase>(true);
+    ClassDB::register_class<VideoStreamPlaybackBase>(true);
 }
 }
 

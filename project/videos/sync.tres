@@ -1,0 +1,4 @@
+[gd_resource type="VideoStreamWMF" format=3 uid="uid://omgrx5xyytdn"]
+
+[resource]
+file = "res://videos/sync.mp4"

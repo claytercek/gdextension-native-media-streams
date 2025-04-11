@@ -1,0 +1,4 @@
+[gd_resource type="VideoStreamWMF" format=3 uid="uid://db713ijvh0vuk"]
+
+[resource]
+file = "res://videos/language_tracks.mp4"

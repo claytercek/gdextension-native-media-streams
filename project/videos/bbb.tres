@@ -1,0 +1,5 @@
+[gd_resource type="VideoStreamWMF" format=3 uid="uid://bsd1xf7ygapfc"]
+
+[resource]
+threaded_decoding = false
+file = "res://videos/bbb.mp4"

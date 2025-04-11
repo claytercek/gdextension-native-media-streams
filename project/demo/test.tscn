@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://c7u64tpv6byvb"]
 
-[ext_resource type="VideoStream" uid="uid://ck3xti1axd6hr" path="res://videos/sync.mp4" id="1_pk6j7"]
+[ext_resource type="VideoStream" uid="uid://omgrx5xyytdn" path="res://videos/sync.tres" id="1_gamli"]
 
 [node name="Test" type="Node"]
 
@@ -10,7 +10,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-stream = ExtResource("1_pk6j7")
+stream = ExtResource("1_gamli")
 autoplay = true
 expand = true
 loop = true

@@ -175,10 +175,9 @@ double WMFPlayer::get_position() const {
 
 bool WMFPlayer::configure_source_reader(const std::string& file_path) {
     if (file_path.empty()) return false;
-
     
     wchar_t wide_path[MAX_PATH];
-    MultiByteToWideChar(CP_UTF8, 0, file_path.c_str(), -1, wide_path, MAX_PATH);;
+    MultiByteToWideChar(CP_UTF8, 0, file_path.c_str(), -1, wide_path, MAX_PATH);
     
     // Create source reader from URL
     ComPtr<IMFSourceReader> reader;

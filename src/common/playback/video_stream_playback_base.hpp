@@ -4,6 +4,7 @@
 #include "../interfaces/audio_mixer.hpp"
 #include "../interfaces/media_player.hpp"
 #include "../media/frame_queue.hpp"
+#include "frame_decoder.hpp"
 
 namespace godot {
 
@@ -19,6 +20,9 @@ protected:
     Ref<ImageTexture> texture;
     VideoFrameQueue video_frames;
     AudioFrameQueue audio_frames;
+    
+    // Frame decoder - abstracts threading details
+    std::unique_ptr<FrameDecoder> decoder;
     
     struct PlaybackState {
         bool playing{false};
@@ -37,9 +41,8 @@ protected:
     double last_video_time{0.0};
     double last_audio_time{0.0};
     
-    // Buffer control constants
-    static constexpr double VIDEO_BUFFER_AHEAD_TIME = 0.5;
-    static constexpr double AUDIO_BUFFER_AHEAD_TIME = 1.0;
+    // Performance settings
+    bool use_threading = true;
     
     // Update the texture from a video frame
     void update_texture_from_frame(const VideoFrame& frame) {
@@ -87,8 +90,11 @@ protected:
             }
             
             try {
-                // Always set_image to ensure correct dimensions
-                texture->set_image(img);
+                if (texture->get_size() == frame.size) {
+                    texture->update(img);
+                } else {
+                    texture->set_image(img);
+                }
             } catch (const std::exception& e) {
                 UtilityFunctions::printerr("Exception setting texture image: " + String(e.what()));
             } catch (...) {
@@ -99,11 +105,9 @@ protected:
         }
     }
     
-    // Process video frames - check queue and buffer more if needed
+    // Process video frames
     virtual void process_video_queue() {
         if (!media_player || !state.playing || state.paused) return;
-
-        buffer_video_frames();
         
         // Get the next frame to display at current time
         auto frame = video_frames.try_pop_frame_at_time(state.engine_time);
@@ -116,14 +120,15 @@ protected:
         if (media_player->has_ended() && video_frames.empty() && audio_frames.empty()) {
             state.playing = false;
             media_player->stop();
+            if (decoder) {
+                decoder->stop();
+            }
         }
     }
     
     // Process audio frames and mix them into Godot's audio system
     virtual void process_audio_queue() {
         if (!media_player || !state.playing || state.paused) return;
-        
-        buffer_audio_frames();
         
         // Mix audio frames that are ready for playback
         while (!audio_frames.empty()) {
@@ -142,32 +147,9 @@ protected:
         }
     }
     
-    // Buffer more video frames from the media player
-    virtual void buffer_video_frames() {
-        if (!media_player) return;
-        
-        while (video_frames.size() < VideoFrameQueue::DEFAULT_MAX_SIZE) {
-            VideoFrame frame;
-            if (media_player->read_video_frame(frame)) {
-                video_frames.push(std::move(frame));
-            } else {
-                break; // No more frames available now
-            }
-        }
-    }
-    
-    // Buffer more audio frames from the media player
-    virtual void buffer_audio_frames() {
-        if (!media_player) return;
-        
-        while (audio_frames.size() < AudioFrameQueue::DEFAULT_MAX_SIZE) {
-            AudioFrame frame;
-            if (media_player->read_audio_frame(frame)) {
-                audio_frames.push(std::move(frame));
-            } else {
-                break; // No more frames available now
-            }
-        }
+    // Initialize decoder with appropriate implementation
+    void setup_decoder() {
+        decoder = FrameDecoder::create(media_player, video_frames, audio_frames, use_threading);
     }
 
 public:
@@ -176,10 +158,34 @@ public:
     }
     
     virtual ~VideoStreamPlaybackBase() {
-        // Ensure media player is cleaned up
+        // Stop decoder first
+        if (decoder) {
+            decoder->stop();
+            decoder.reset();
+        }
+        
+        // Clean up media player
         if (media_player) {
             media_player->close();
             media_player.reset();
+        }
+    }
+    
+    // Enable or disable threaded decoding
+    void set_threaded_decoding(bool enabled) {
+        if (use_threading == enabled) return;
+        
+        use_threading = enabled;
+        
+        // If we're currently playing, restart with new decoder type
+        if (state.playing && !state.paused) {
+            if (decoder) {
+                decoder->stop();
+                decoder.reset();
+            }
+            
+            setup_decoder();
+            decoder->start();
         }
     }
     
@@ -207,12 +213,17 @@ public:
             media_player->seek(0.0);
             media_player->play();
             
-            // Pre-buffer some frames
-            buffer_video_frames();
-            buffer_audio_frames();
+            // Start appropriate decoder
+            setup_decoder();
+            decoder->start();
         } else if (state.paused) {
             // Resuming from pause
             media_player->play();
+            
+            // Resume decoder
+            if (decoder) {
+                decoder->resume();
+            }
         }
         
         state.playing = true;
@@ -221,6 +232,12 @@ public:
     
     virtual void _stop() override {
         if (!media_player) return;
+        
+        // Stop the decoder
+        if (decoder) {
+            decoder->stop();
+            decoder.reset();
+        }
         
         media_player->stop();
         state.playing = false;
@@ -244,8 +261,16 @@ public:
             
             if (p_paused) {
                 media_player->pause();
+                // Pause decoder
+                if (decoder) {
+                    decoder->pause();
+                }
             } else {
                 media_player->play();
+                // Resume decoder
+                if (decoder) {
+                    decoder->resume();
+                }
             }
         }
     }
@@ -261,6 +286,11 @@ public:
     virtual void _seek(double p_time) override {
         if (!media_player) return;
         
+        // Pause decoder during seeking
+        if (decoder) {
+            decoder->pause();
+        }
+        
         // Clear frame queues
         video_frames.clear();
         audio_frames.clear();
@@ -273,14 +303,20 @@ public:
         // Seek in media player
         media_player->seek(p_time);
         
-        // Buffer new frames at the seek position
-        buffer_video_frames();
-        buffer_audio_frames();
+        // Resume decoder after seek
+        if (decoder) {
+            decoder->resume();
+        }
     }
     
     virtual void _update(double delta) override {
         // Update current playback time
         state.engine_time += delta;
+
+        // If using synchronous decoder, explicitly decode frames
+        if (!use_threading && decoder && decoder->is_running()) {
+            static_cast<SyncFrameDecoder*>(decoder.get())->decode_frames();
+        }
 
         process_video_queue();
         process_audio_queue();

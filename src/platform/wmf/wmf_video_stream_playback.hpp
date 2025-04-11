@@ -33,7 +33,7 @@ protected:
     static void _bind_methods();
 
 public:
-    virtual Ref<VideoStreamPlayback> _instantiate_playback() override;
+    virtual Ref<VideoStreamPlaybackBase> _create_playback_instance() override;
 };
 
 } // namespace godot
