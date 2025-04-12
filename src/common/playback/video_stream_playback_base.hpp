@@ -155,6 +155,9 @@ protected:
 public:
     VideoStreamPlaybackBase() {
         texture.instantiate();
+        Ref<Image> img = Image::create(1, 1, false, Image::FORMAT_RGBA8);
+        img->fill(Color(0, 0, 0, 0));
+        texture->set_image(img);
     }
     
     virtual ~VideoStreamPlaybackBase() {
@@ -333,18 +336,6 @@ public:
     }
     
     virtual Ref<Texture2D> _get_texture() const override {
-        if (!texture.is_valid()) {
-            // Create a 1x1 black texture as fallback for audio-only streams
-            Ref<Image> img = Image::create(1, 1, false, Image::FORMAT_RGBA8);
-            img->fill(Color(0, 0, 0, 1)); // Black, opaque
-            
-            Ref<ImageTexture> fallback;
-            fallback.instantiate();
-            fallback->set_image(img);
-            
-            return fallback;
-        }
-        
         return texture;
     }
     

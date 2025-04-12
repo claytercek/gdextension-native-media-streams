@@ -10,8 +10,6 @@ void VideoStreamPlaybackWMF::_bind_methods() {
 }
 
 VideoStreamPlaybackWMF::VideoStreamPlaybackWMF() {
-    // Initialize texture
-    texture.instantiate();
 }
 
 VideoStreamPlaybackWMF::~VideoStreamPlaybackWMF() {
