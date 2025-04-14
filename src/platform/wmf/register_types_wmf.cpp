@@ -1,7 +1,10 @@
 #include "register_types_wmf.h"
 #include "wmf_video_stream_playback.hpp"
+#include "wmf_hardware_helper.hpp"
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/resource_format_loader.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 
 namespace godot {
 
@@ -27,6 +30,9 @@ public:
         extensions.push_back("m4v");
         extensions.push_back("mov");
         extensions.push_back("wmv");
+        extensions.push_back("mkv");
+        extensions.push_back("avi");
+        extensions.push_back("webm");
         return extensions;
     }
 
@@ -36,7 +42,9 @@ public:
 
     String _get_resource_type(const String &p_path) const override {
         String extension = p_path.get_extension().to_lower();
-        if (extension == "mp4" || extension == "m4v" || extension == "mov" || extension == "wmv") {
+        if (extension == "mp4" || extension == "m4v" || extension == "mov" || 
+            extension == "wmv" || extension == "mkv" || extension == "avi" ||
+            extension == "webm") {
             return "VideoStream";
         }
         return "";
@@ -47,30 +55,32 @@ static Ref<ResourceFormatLoaderWMF> wmf_resource_loader;
 
 // Module initialization
 void initialize_native_media_streams_wmf(ModuleInitializationLevel p_level) {
-    if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-        return;
+    if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
+        // Register WMF-specific classes
+        ClassDB::register_class<ResourceFormatLoaderWMF>();
+        ClassDB::register_class<VideoStreamWMF>();
+        ClassDB::register_class<VideoStreamPlaybackWMF>();
+
+        // Register resource loader
+        wmf_resource_loader.instantiate();
+        ResourceLoader::get_singleton()->add_resource_format_loader(wmf_resource_loader);
+
+        // Log initialization
+        UtilityFunctions::print("Windows Media Foundation video backend initialized");
+
+        // Initialize hardware acceleration settings in project settings
+        // We let the VideoStreamWMF class handle the project settings registration
     }
-
-    // Register classes
-    ClassDB::register_class<ResourceFormatLoaderWMF>();
-    ClassDB::register_class<VideoStreamWMF>();
-    ClassDB::register_class<VideoStreamPlaybackWMF>();
-
-    // Register resource loader
-    wmf_resource_loader.instantiate();
-    ResourceLoader::get_singleton()->add_resource_format_loader(wmf_resource_loader);
 }
 
 // Module cleanup
 void uninitialize_native_media_streams_wmf(ModuleInitializationLevel p_level) {
-    if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-        return;
+    if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
+        // Cleanup resource loader
+        ResourceLoader::get_singleton()->remove_resource_format_loader(
+            wmf_resource_loader);
+        wmf_resource_loader.unref();
     }
-
-    // Cleanup resource loader
-    ResourceLoader::get_singleton()->remove_resource_format_loader(
-        wmf_resource_loader);
-    wmf_resource_loader.unref();
 }
 
 } // namespace godot

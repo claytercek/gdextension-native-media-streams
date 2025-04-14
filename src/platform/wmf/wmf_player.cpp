@@ -24,6 +24,13 @@ WMFPlayer::WMFPlayer() {
     if (FAILED(hr)) {
         UtilityFunctions::printerr("Failed to initialize Windows Media Foundation: " + hr_to_string(hr));
     }
+    
+    // Initialize hardware acceleration helper
+    hw_helper = std::make_unique<WMFHardwareHelper>();
+    if (!hw_helper->initialize()) {
+        UtilityFunctions::print("Hardware acceleration initialization failed, using software decoding");
+        use_hw_acceleration = false;
+    }
 }
 
 WMFPlayer::~WMFPlayer() {
@@ -35,6 +42,8 @@ WMFPlayer::~WMFPlayer() {
 }
 
 bool WMFPlayer::open(const std::string& file_path) {
+    std::lock_guard<std::mutex> lock(reader_mutex);
+    
     close(); // Close any previous media
     
     if (file_path.empty()) {
@@ -69,11 +78,16 @@ bool WMFPlayer::open(const std::string& file_path) {
         return false;
     }
     
+    // Populate audio track information
+    populate_track_info();
+    
     current_state = State::STOPPED;
     return true;
 }
 
 void WMFPlayer::close() {
+    std::lock_guard<std::mutex> lock(reader_mutex);
+    
     // Release the source reader
     source_reader.Reset();
     
@@ -85,6 +99,9 @@ void WMFPlayer::close() {
     // Reset position tracking
     last_video_position = 0.0;
     last_audio_position = 0.0;
+    
+    // Clear track info
+    audio_tracks.clear();
 }
 
 bool WMFPlayer::is_open() const {
@@ -115,6 +132,8 @@ void WMFPlayer::stop() {
 }
 
 void WMFPlayer::seek(double time_sec) {
+    std::lock_guard<std::mutex> lock(reader_mutex);
+    
     if (!is_open()) return;
     
     // Create PROPVARIANT with 100ns precision timestamp for WMF
@@ -190,18 +209,27 @@ bool WMFPlayer::configure_source_reader(const std::string& file_path) {
         return false;
     }
     
-    // Enable hardware decoding (important for better performance and compatibility)
-    hr = attributes->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
-    if (FAILED(hr)) {
-        UtilityFunctions::print("Warning: Failed to enable advanced video processing");
-        // Continue anyway, hardware acceleration is optional
-    }
-    
-    // Set low-latency hint
-    hr = attributes->SetUINT32(MF_LOW_LATENCY, TRUE);
-    if (FAILED(hr)) {
-        UtilityFunctions::print("Warning: Failed to set low latency hint");
-        // Continue anyway
+    // Configure hardware acceleration if enabled
+    if (use_hw_acceleration && hw_helper) {
+        // Configure source reader for hardware acceleration
+        if (!hw_helper->configure_reader(attributes.Get())) {
+            UtilityFunctions::print("Warning: Hardware acceleration configuration failed, falling back to software decoding");
+            // This is non-fatal - we'll continue with software decoding
+        }
+    } else {
+        // Enable at least the basic advanced processing
+        hr = attributes->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
+        if (FAILED(hr)) {
+            UtilityFunctions::print("Warning: Failed to enable advanced video processing");
+            // Continue anyway, hardware acceleration is optional
+        }
+        
+        // Set low-latency hint
+        hr = attributes->SetUINT32(MF_LOW_LATENCY, TRUE);
+        if (FAILED(hr)) {
+            UtilityFunctions::print("Warning: Failed to set low latency hint");
+            // Continue anyway
+        }
     }
     
     // Create source reader
@@ -246,6 +274,27 @@ bool WMFPlayer::configure_source_reader(const std::string& file_path) {
     hr = pd->GetStreamDescriptorCount(&stream_count);
     if (SUCCEEDED(hr)) {
         UtilityFunctions::print_verbose("Media file has " + String::num_int64(stream_count) + " streams");
+        
+        // Set the initial track count
+        media_info.audio_track_count = 0;
+        
+        // Count audio streams - we'll populate detailed info later
+        for (DWORD i = 0; i < stream_count; i++) {
+            BOOL selected = FALSE;
+            ComPtr<IMFStreamDescriptor> sd;
+            hr = pd->GetStreamDescriptorByIndex(i, &selected, &sd);
+            if (SUCCEEDED(hr)) {
+                ComPtr<IMFMediaTypeHandler> handler;
+                hr = sd->GetMediaTypeHandler(&handler);
+                if (SUCCEEDED(hr)) {
+                    GUID major_type;
+                    hr = handler->GetMajorType(&major_type);
+                    if (SUCCEEDED(hr) && major_type == MFMediaType_Audio) {
+                        media_info.audio_track_count++;
+                    }
+                }
+            }
+        }
     }
     
     // Deselect all streams by default
@@ -259,6 +308,8 @@ bool WMFPlayer::configure_source_reader(const std::string& file_path) {
 }
 
 bool WMFPlayer::configure_video_stream() {
+    std::lock_guard<std::mutex> lock(reader_mutex);
+    
     if (!source_reader) return false;
     
     try {
@@ -373,60 +424,86 @@ bool WMFPlayer::configure_video_stream() {
             // Not critical
         }
         
-        // Try different formats in order of preference:
-        // 1. RGB32 (most compatible with Godot's RGBA8)
+        // Try different formats with hardware acceleration in mind
         bool format_set = false;
         
-        // Try RGB32 first
-        hr = output_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
-        if (SUCCEEDED(hr)) {
-            hr = source_reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, output_type.Get());
-            if (SUCCEEDED(hr)) {
-                UtilityFunctions::print("Using RGB32 format for video");
-                format_set = true;
-            } else {
-                UtilityFunctions::printerr("Failed to set RGB32 media type: " + hr_to_string(hr));
-            }
-        }
-        
-        // Try RGB24 if RGB32 failed
-        if (!format_set) {
-            hr = output_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB24);
+        // First, try hardware-optimized format if hardware acceleration is enabled
+        if (use_hw_acceleration && hw_helper && hw_helper->is_hardware_available()) {
+            // Get recommended format for hardware acceleration
+            GUID hw_format = hw_helper->get_recommended_output_format();
+            
+            hr = output_type->SetGUID(MF_MT_SUBTYPE, hw_format);
             if (SUCCEEDED(hr)) {
                 hr = source_reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, output_type.Get());
                 if (SUCCEEDED(hr)) {
-                    UtilityFunctions::print("Using RGB24 format for video");
+                    UtilityFunctions::print("Using hardware-accelerated " + 
+                        String(hw_format == MFVideoFormat_NV12 ? "NV12" : "RGB32") + " format for video");
                     format_set = true;
+                    hw_helper->set_hardware_active(true);
                 } else {
-                    UtilityFunctions::printerr("Failed to set RGB24 media type: " + hr_to_string(hr));
+                    UtilityFunctions::printerr("Failed to set hardware-accelerated format: " + hr_to_string(hr));
+                    hw_helper->set_hardware_active(false);
                 }
             }
         }
         
-        // Try YUY2 if previous formats failed
+        // If hardware acceleration failed or is disabled, try software formats in order
         if (!format_set) {
-            hr = output_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_YUY2);
+            if (hw_helper) {
+                hw_helper->set_hardware_active(false);
+            }
+            
+            // Try RGB32 first
+            hr = output_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
             if (SUCCEEDED(hr)) {
                 hr = source_reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, output_type.Get());
                 if (SUCCEEDED(hr)) {
-                    UtilityFunctions::print("Using YUY2 format for video (will convert to RGB)");
+                    UtilityFunctions::print("Using RGB32 format for video");
                     format_set = true;
                 } else {
-                    UtilityFunctions::printerr("Failed to set YUY2 media type: " + hr_to_string(hr));
+                    UtilityFunctions::printerr("Failed to set RGB32 media type: " + hr_to_string(hr));
                 }
             }
-        }
-        
-        // Try NV12 as last resort (common intermediate format)
-        if (!format_set) {
-            hr = output_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
-            if (SUCCEEDED(hr)) {
-                hr = source_reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, output_type.Get());
+            
+            // Try RGB24 if RGB32 failed
+            if (!format_set) {
+                hr = output_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB24);
                 if (SUCCEEDED(hr)) {
-                    UtilityFunctions::print("Using NV12 format for video (will convert to RGB)");
-                    format_set = true;
-                } else {
-                    UtilityFunctions::printerr("Failed to set NV12 media type: " + hr_to_string(hr));
+                    hr = source_reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, output_type.Get());
+                    if (SUCCEEDED(hr)) {
+                        UtilityFunctions::print("Using RGB24 format for video");
+                        format_set = true;
+                    } else {
+                        UtilityFunctions::printerr("Failed to set RGB24 media type: " + hr_to_string(hr));
+                    }
+                }
+            }
+            
+            // Try YUY2 if previous formats failed
+            if (!format_set) {
+                hr = output_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_YUY2);
+                if (SUCCEEDED(hr)) {
+                    hr = source_reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, output_type.Get());
+                    if (SUCCEEDED(hr)) {
+                        UtilityFunctions::print("Using YUY2 format for video (will convert to RGB)");
+                        format_set = true;
+                    } else {
+                        UtilityFunctions::printerr("Failed to set YUY2 media type: " + hr_to_string(hr));
+                    }
+                }
+            }
+            
+            // Try NV12 as last resort (common intermediate format)
+            if (!format_set) {
+                hr = output_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
+                if (SUCCEEDED(hr)) {
+                    hr = source_reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, output_type.Get());
+                    if (SUCCEEDED(hr)) {
+                        UtilityFunctions::print("Using NV12 format for video (will convert to RGB)");
+                        format_set = true;
+                    } else {
+                        UtilityFunctions::printerr("Failed to set NV12 media type: " + hr_to_string(hr));
+                    }
                 }
             }
         }
@@ -451,6 +528,16 @@ bool WMFPlayer::configure_video_stream() {
                     media_info.height = actual_height;
                 }
             }
+            
+            // Check if we're using hardware acceleration
+            GUID actual_subtype;
+            if (SUCCEEDED(actual_type->GetGUID(MF_MT_SUBTYPE, &actual_subtype))) {
+                UtilityFunctions::print_verbose("Using video format: " + 
+                    String(actual_subtype == MFVideoFormat_RGB32 ? "RGB32" : 
+                          actual_subtype == MFVideoFormat_RGB24 ? "RGB24" : 
+                          actual_subtype == MFVideoFormat_YUY2 ? "YUY2" : 
+                          actual_subtype == MFVideoFormat_NV12 ? "NV12" : "Unknown"));
+            }
         }
         
         return true;
@@ -462,6 +549,8 @@ bool WMFPlayer::configure_video_stream() {
 }
 
 bool WMFPlayer::configure_audio_stream() {
+    std::lock_guard<std::mutex> lock(reader_mutex);
+    
     if (!source_reader) return false;
     
     // Select the first audio stream
@@ -590,7 +679,99 @@ bool WMFPlayer::configure_audio_stream() {
     return true;
 }
 
+bool WMFPlayer::populate_track_info() {
+    audio_tracks.clear();
+    
+    if (!source_reader) {
+        return false;
+    }
+    
+    // Get the media source to query stream information
+    ComPtr<IMFMediaSource> media_source;
+    HRESULT hr = source_reader->GetServiceForStream(MF_SOURCE_READER_MEDIASOURCE, GUID_NULL, IID_PPV_ARGS(&media_source));
+    if (FAILED(hr)) {
+        return false;
+    }
+    
+    // Get the presentation descriptor
+    ComPtr<IMFPresentationDescriptor> pd;
+    hr = media_source->CreatePresentationDescriptor(&pd);
+    if (FAILED(hr)) {
+        return false;
+    }
+    
+    // Get stream count
+    DWORD stream_count = 0;
+    hr = pd->GetStreamDescriptorCount(&stream_count);
+    if (FAILED(hr)) {
+        return false;
+    }
+    
+    int audio_index = 0;
+    
+    // Iterate through streams
+    for (DWORD i = 0; i < stream_count; i++) {
+        BOOL selected = FALSE;
+        ComPtr<IMFStreamDescriptor> sd;
+        hr = pd->GetStreamDescriptorByIndex(i, &selected, &sd);
+        if (SUCCEEDED(hr)) {
+            // Get the media type handler for this stream
+            ComPtr<IMFMediaTypeHandler> type_handler;
+            hr = sd->GetMediaTypeHandler(&type_handler);
+            if (SUCCEEDED(hr)) {
+                // Check if this is an audio stream
+                GUID major_type;
+                hr = type_handler->GetMajorType(&major_type);
+                if (SUCCEEDED(hr) && major_type == MFMediaType_Audio) {
+                    // Get stream ID to map to reader stream index
+                    DWORD stream_id = 0;
+                    hr = sd->GetStreamIdentifier(&stream_id);
+                    
+                    // Create track info
+                    TrackInfo track;
+                    track.index = audio_index++;
+                    
+                    // Try to get language info
+                    WCHAR language[32] = {0};
+                    if (SUCCEEDED(sd->GetString(MF_SD_LANGUAGE, language, 32, nullptr)) && language[0] != 0) {
+                        // Convert wide string to UTF-8
+                        char lang_utf8[32] = {0};
+                        WideCharToMultiByte(CP_UTF8, 0, language, -1, lang_utf8, 32, nullptr, nullptr);
+                        track.language = lang_utf8;
+                    }
+                    
+                    // Try to get track name
+                    WCHAR label[128] = {0};
+                    if (SUCCEEDED(sd->GetString(MF_SD_STREAM_NAME, label, 128, nullptr)) && label[0] != 0) {
+                        // Convert wide string to UTF-8
+                        char label_utf8[128] = {0};
+                        WideCharToMultiByte(CP_UTF8, 0, label, -1, label_utf8, 128, nullptr, nullptr);
+                        track.name = label_utf8;
+                    }
+                    
+                    // If no name is available, create a default one
+                    if (track.name.empty()) {
+                        track.name = "Audio Track " + std::to_string(track.index + 1);
+                        if (!track.language.empty()) {
+                            track.name += " (" + track.language + ")";
+                        }
+                    }
+                    
+                    audio_tracks.push_back(track);
+                }
+            }
+        }
+    }
+    
+    // Update media info with actual count
+    media_info.audio_track_count = static_cast<int>(audio_tracks.size());
+    
+    return true;
+}
+
 bool WMFPlayer::read_video_frame(VideoFrame& frame) {
+    std::lock_guard<std::mutex> lock(reader_mutex);
+    
     // Check if we have a valid source reader and if video is enabled
     if (!source_reader || current_state == State::STOPPED) return false;
     
@@ -643,6 +824,18 @@ bool WMFPlayer::read_video_frame(VideoFrame& frame) {
             return false;
         }
         
+        // If we're using hardware acceleration, ensure the sample is CPU accessible
+        if (hw_helper && hw_helper->is_hardware_active()) {
+            ComPtr<IMFSample> cpu_sample;
+            hr = hw_helper->ensure_cpu_accessible_sample(sample.Get(), &cpu_sample);
+            if (SUCCEEDED(hr) && cpu_sample) {
+                sample = cpu_sample;
+            } else {
+                UtilityFunctions::printerr("Failed to convert hardware sample to CPU accessible format");
+                return false;
+            }
+        }
+        
         // Extract the video data
         return extract_video_data(sample.Get(), frame);
     }
@@ -653,6 +846,8 @@ bool WMFPlayer::read_video_frame(VideoFrame& frame) {
 }
 
 bool WMFPlayer::read_audio_frame(AudioFrame& frame) {
+    std::lock_guard<std::mutex> lock(reader_mutex);
+    
     if (!source_reader || media_info.audio_channels == 0 || current_state == State::STOPPED) {
         return false;
     }
@@ -813,7 +1008,7 @@ bool WMFPlayer::extract_video_data(IMFSample* sample, VideoFrame& frame) {
         } else if (video_format == MFVideoFormat_YUY2) {
             // YUY2 to RGBA conversion
             // YUY2 format packs 2 pixels into 4 bytes: [Y0, U0, Y1, V0]
-            const int src_stride = (frame.size.x + 1) / 2 * 4; // YUY2 stride
+            const int src_stride = ((frame.size.x + 1) / 2) * 4; // YUY2 stride
             
             for (int y = 0; y < frame.size.y; y++) {
                 uint8_t* src = data + y * src_stride;
@@ -852,8 +1047,8 @@ bool WMFPlayer::extract_video_data(IMFSample* sample, VideoFrame& frame) {
                 }
             }
         } else if (video_format == MFVideoFormat_NV12) {
-            // NV12 to RGBA conversion
-            // NV12 format has Y plane followed by interleaved U/V plane
+            // NV12 to RGBA conversion - Hardware decoders often use this format
+            // NV12 format has Y plane followed by interleaved UV plane
             const int y_plane_size = frame.size.x * frame.size.y;
             const uint8_t* y_plane = data;
             const uint8_t* uv_plane = data + y_plane_size;
@@ -997,25 +1192,76 @@ bool WMFPlayer::extract_audio_data(IMFSample* sample, AudioFrame& frame) {
 }
 
 int WMFPlayer::get_audio_track_count() const {
-    // For now return 1 if we have audio, 0 otherwise
-    return media_info.audio_channels > 0 ? 1 : 0;
+    return static_cast<int>(audio_tracks.size());
 }
 
 IMediaPlayer::TrackInfo WMFPlayer::get_audio_track_info(int track_index) const {
+    if (track_index >= 0 && track_index < static_cast<int>(audio_tracks.size())) {
+        return audio_tracks[track_index];
+    }
+    
+    // Return empty info if track doesn't exist
     TrackInfo info;
     info.index = track_index;
-    info.language = ""; // WMF doesn't easily expose this
-    info.name = "Audio Track " + std::to_string(track_index + 1);
+    info.name = "Unknown Track";
     return info;
 }
 
 void WMFPlayer::set_audio_track(int track_index) {
-    // Only one track supported for now
-    current_audio_track = track_index;
+    if (track_index >= 0 && track_index < static_cast<int>(audio_tracks.size())) {
+        current_audio_track = track_index;
+        
+        // TODO: Implement actual track switching in WMF
+        // This requires more complex handling of streams
+    }
 }
 
 int WMFPlayer::get_current_audio_track() const {
     return current_audio_track;
+}
+
+void WMFPlayer::set_hardware_acceleration(bool enabled) {
+    // Only update if there's a change in the setting
+    if (use_hw_acceleration != enabled) {
+        use_hw_acceleration = enabled;
+        
+        // If we have an open media file, we need to reopen it with the new setting
+        if (is_open()) {
+            // Remember the current state and position
+            State prev_state = current_state;
+            double position = last_video_position;
+            
+            // Get the current file path from the source reader
+            std::string current_path;
+            ComPtr<IMFMediaSource> media_source;
+            HRESULT hr = source_reader->GetServiceForStream(MF_SOURCE_READER_MEDIASOURCE, GUID_NULL, IID_PPV_ARGS(&media_source));
+            if (SUCCEEDED(hr)) {
+                // TODO: Store the file path when first opened to avoid this complexity
+                ComPtr<IMFSourceResolver> resolver;
+                hr = MFCreateSourceResolver(&resolver);
+                if (SUCCEEDED(hr)) {
+                    // For now, just notify that we can't change this setting for an open file
+                    UtilityFunctions::print("Hardware acceleration setting can only be changed before opening a file");
+                    return;
+                }
+            }
+            
+            // Reopen the file with new hardware acceleration setting
+            // This would typically involve:
+            // 1. Close the current file
+            // 2. Reopen with the new hardware setting
+            // 3. Seek to the previous position
+            // 4. Restore playback state
+        }
+    }
+}
+
+bool WMFPlayer::is_hardware_acceleration_enabled() const {
+    return use_hw_acceleration;
+}
+
+bool WMFPlayer::is_hardware_acceleration_active() const {
+    return hw_helper && hw_helper->is_hardware_active();
 }
 
 } // namespace godot

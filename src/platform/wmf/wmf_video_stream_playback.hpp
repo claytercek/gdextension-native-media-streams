@@ -12,12 +12,21 @@ namespace godot {
 class VideoStreamPlaybackWMF : public VideoStreamPlaybackBase {
     GDCLASS(VideoStreamPlaybackWMF, VideoStreamPlaybackBase)
 
+private:
+    // Hardware acceleration flag
+    bool hardware_acceleration_enabled = true;
+
 public:
     VideoStreamPlaybackWMF();
     virtual ~VideoStreamPlaybackWMF();
     
     // Initialize with file path
     void initialize(const String& p_file);
+    
+    // Hardware acceleration control
+    void set_hardware_acceleration(bool p_enabled);
+    bool is_hardware_acceleration_enabled() const;
+    bool is_hardware_acceleration_active() const;
 
 protected:
     static void _bind_methods();

@@ -1,6 +1,7 @@
 #pragma once
 #include "../../common/interfaces/media_player.hpp"
 #include "../../common/media/media_time.hpp"
+#include "wmf_hardware_helper.hpp"
 #include <wrl/client.h>
 #include <windows.h>
 #include <mfapi.h>
@@ -8,6 +9,8 @@
 #include <mfreadwrite.h>
 #include <memory>
 #include <string>
+#include <vector>
+#include <mutex>
 
 using Microsoft::WRL::ComPtr;
 
@@ -22,6 +25,9 @@ private:
     // WMF resources
     ComPtr<IMFSourceReader> source_reader;
     
+    // Hardware acceleration helper
+    std::unique_ptr<WMFHardwareHelper> hw_helper;
+    
     // Media information
     MediaInfo media_info;
     State current_state{State::STOPPED};
@@ -30,6 +36,15 @@ private:
     // Last read positions
     double last_video_position{0.0};
     double last_audio_position{0.0};
+
+    // Track information
+    std::vector<TrackInfo> audio_tracks;
+    
+    // Thread safety
+    std::mutex reader_mutex;
+    
+    // Hardware acceleration settings
+    bool use_hw_acceleration = true;
     
     // Helper methods
     bool configure_source_reader(const std::string& file_path);
@@ -37,6 +52,7 @@ private:
     bool configure_audio_stream();
     bool extract_video_data(IMFSample* sample, VideoFrame& frame);
     bool extract_audio_data(IMFSample* sample, AudioFrame& frame);
+    bool populate_track_info();
 
 public:
     WMFPlayer();
@@ -67,6 +83,11 @@ public:
     TrackInfo get_audio_track_info(int track_index) const override;
     void set_audio_track(int track_index) override;
     int get_current_audio_track() const override;
+    
+    // Hardware acceleration control
+    void set_hardware_acceleration(bool enabled);
+    bool is_hardware_acceleration_enabled() const;
+    bool is_hardware_acceleration_active() const;
 };
 
 } // namespace godot
